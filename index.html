@@ -65,16 +65,8 @@
                           window.matchMedia('(display-mode: standalone)').matches;
 
     if (isStandalone) {
-      // 从主屏幕打开：不整页转跳（一转跳去别的网址，手机就会把
-      // 网址列、工具列都加回来），改成把真正的网站包在这一页里面显示，
-      // 这样才能一直保持「全屏、没有浏览器外框」的样子
-      // Launched from the home screen: don't navigate away (doing so
-      // brings back the address bar and toolbar) — instead, embed the
-      // real site inside this same page so it stays full-screen with
-      // no browser chrome
-      document.body.innerHTML =
-        '<iframe src="' + APP_URL + '" ' +
-        'style="position:fixed; inset:0; width:100%; height:100%; border:none;"></iframe>';
+      document.getElementById('statusText').textContent = '正在打开两人的空间... / Opening...';
+      window.location.href = APP_URL;
     } else {
       // 平常用 Safari 打开：留在这一页，等你按「分享 → 加入主屏幕」
       // Opened normally in Safari: stay here so you can Share → Add to Home Screen
