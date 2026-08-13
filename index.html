@@ -487,31 +487,65 @@ async function toggleReaction(postId, emojiType, box) {
     } else {
       await setDoc(reactionRef, { emojiType: emojiType, author: currentUser.email });
       applySelectedState(box, emojiType);
-      playPopSound();
+      playPopSound(emojiType);
     }
   } catch (err) {
     alert('Emoji 反应失败 / Reaction failed: ' + err.message);
   }
 }
 
-// 选中 Emoji 时的小音效——用 Web Audio 直接合成，不用另外载音乐文件
-// A short "pop" sound for when an emoji is selected — synthesized directly
-// via Web Audio, no separate sound file needed
+// 五种反应各自的小音效——用 Web Audio 直接合成，不用另外载音乐文件
+// A distinct short sound for each reaction — synthesized directly via
+// Web Audio, no separate sound files needed
 let audioCtx = null;
-function playPopSound() {
+function getAudioCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+
+// 播放一个音符：类型、频率、开始时间(相对秒)、长度(秒)、音量
+// Play one tone: waveform, frequency, start offset (sec), duration (sec), volume
+function playTone(waveType, freq, startOffset, duration, volume, glideToFreq) {
+  const ctx = getAudioCtx();
+  const startTime = ctx.currentTime + startOffset;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = waveType;
+  osc.frequency.setValueAtTime(freq, startTime);
+  if (glideToFreq) {
+    osc.frequency.exponentialRampToValueAtTime(glideToFreq, startTime + duration);
+  }
+  gain.gain.setValueAtTime(volume, startTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(startTime);
+  osc.stop(startTime + duration);
+}
+
+function playPopSound(emojiType) {
   try {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(600, audioCtx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(900, audioCtx.currentTime + 0.08);
-    gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
-    osc.connect(gain);
-    gain.connect(audioCtx.destination);
-    osc.start();
-    osc.stop(audioCtx.currentTime + 0.15);
+    if (emojiType === 'Love') {
+      // 温柔上扬的两个音，像小心跳 / gentle two-note rise, like a little heartbeat
+      playTone('sine', 500, 0, 0.12, 0.14);
+      playTone('sine', 660, 0.1, 0.18, 0.14);
+    } else if (emojiType === 'Like') {
+      // 清脆短促、正向 / crisp, quick, upbeat
+      playTone('triangle', 700, 0, 0.1, 0.15, 1050);
+    } else if (emojiType === 'Support') {
+      // 低沉有力，比较扎实 / a firmer, lower, confident thump
+      playTone('square', 220, 0, 0.16, 0.11);
+      playTone('sine', 220, 0, 0.16, 0.08);
+    } else if (emojiType === 'Hug') {
+      // 柔和绵长，比较温暖 / soft and sustained, warm
+      playTone('sine', 440, 0, 0.35, 0.1);
+      playTone('sine', 550, 0.05, 0.32, 0.07);
+    } else if (emojiType === 'Angry') {
+      // 短促粗糙、往下掉，比较刺耳 / short, coarse, dropping — a bit sharp
+      playTone('sawtooth', 380, 0, 0.16, 0.1, 180);
+    } else {
+      playTone('sine', 600, 0, 0.15, 0.15, 900);
+    }
   } catch (e) {
     // 有些浏览器可能不支援，忽略就好，不影响其他功能
     // Some browsers may not support this — ignore, doesn't affect anything else
