@@ -477,16 +477,20 @@ function renderReactions(postId, box) {
 }
 
 async function toggleReaction(postId, emojiType, box) {
-  const reactionRef = doc(db, 'posts', postId, 'reactions', currentUser.uid);
-  const snap = await getDoc(reactionRef);
-  const already = snap.exists() && snap.data().emojiType === emojiType;
-  if (already) {
-    await deleteDoc(reactionRef);
-    applySelectedState(box, null);
-  } else {
-    await setDoc(reactionRef, { emojiType: emojiType, author: currentUser.email });
-    applySelectedState(box, emojiType);
-    playPopSound();
+  try {
+    const reactionRef = doc(db, 'posts', postId, 'reactions', currentUser.uid);
+    const snap = await getDoc(reactionRef);
+    const already = snap.exists() && snap.data().emojiType === emojiType;
+    if (already) {
+      await deleteDoc(reactionRef);
+      applySelectedState(box, null);
+    } else {
+      await setDoc(reactionRef, { emojiType: emojiType, author: currentUser.email });
+      applySelectedState(box, emojiType);
+      playPopSound();
+    }
+  } catch (err) {
+    alert('Emoji 反应失败 / Reaction failed: ' + err.message);
   }
 }
 
