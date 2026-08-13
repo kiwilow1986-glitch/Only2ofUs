@@ -1,18 +1,19 @@
 <!DOCTYPE html>
 <!--
-  Only2ofUs — 转跳页面 / redirect launcher
+  Only2ofUs — 全屏启动页 / full-screen launcher
   ==========================================
-  唯一的功能：加到 iPhone 主屏幕后，点开图示会自动跳转到
-  MrLow&MsFum 那个真正的网站。放这个转跳页面的原因是：
-  Apps Script 网站本身被包在好几层 iframe 里，iPhone 抓不到
-  我们自己设定的图示，只能看最外层——所以另外做这个最外层的
-  小页面，负责显示图示，然后立刻带你去真正的网站。
+  加到 iPhone 主屏幕后，点开图示会把真正的 MrLow&MsFum 网站包在
+  这个页面里面显示（不是转跳过去），这样才能保持全屏、不出现浏览器
+  的网址列和工具列。放这个页面的原因是：Apps Script 网站本身被包
+  在好几层 iframe 里，iPhone 抓不到我们自己设定的图示，只能看
+  最外层——所以另外做这个最外层的小页面，负责显示图示。
 
-  Only function: after adding to the iPhone home screen, tapping the
-  icon auto-redirects to the real MrLow&MsFum site. This exists because
-  Apps Script sites are nested inside several iframes, so iPhone can't
-  see our custom icon there — this outer page shows the icon instead,
-  then immediately forwards you to the real site.
+  After adding to the iPhone home screen, tapping the icon embeds the
+  real MrLow&MsFum site inside this page (rather than navigating away),
+  which is what keeps it full-screen without the browser's address bar
+  and toolbar. This page exists because Apps Script sites are nested
+  inside several iframes, so iPhone can't see our custom icon there —
+  this outer page shows the icon instead.
 -->
 <html lang="zh">
 <head>
@@ -64,8 +65,16 @@
                           window.matchMedia('(display-mode: standalone)').matches;
 
     if (isStandalone) {
-      document.getElementById('statusText').textContent = '正在打开两人的空间... / Opening...';
-      window.location.href = APP_URL;
+      // 从主屏幕打开：不整页转跳（一转跳去别的网址，手机就会把
+      // 网址列、工具列都加回来），改成把真正的网站包在这一页里面显示，
+      // 这样才能一直保持「全屏、没有浏览器外框」的样子
+      // Launched from the home screen: don't navigate away (doing so
+      // brings back the address bar and toolbar) — instead, embed the
+      // real site inside this same page so it stays full-screen with
+      // no browser chrome
+      document.body.innerHTML =
+        '<iframe src="' + APP_URL + '" ' +
+        'style="position:fixed; inset:0; width:100%; height:100%; border:none;"></iframe>';
     } else {
       // 平常用 Safari 打开：留在这一页，等你按「分享 → 加入主屏幕」
       // Opened normally in Safari: stay here so you can Share → Add to Home Screen
