@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<!--
+  Only2ofUs — 全屏启动页 / full-screen launcher
+  ==========================================
+  加到 iPhone 主屏幕后，点开图示会把真正的 MrLow&MsFum 网站包在
+  这个页面里面显示（不是转跳过去），这样才能保持全屏、不出现浏览器
+  的网址列和工具列。放这个页面的原因是：Apps Script 网站本身被包
+  在好几层 iframe 里，iPhone 抓不到我们自己设定的图示，只能看
+  最外层——所以另外做这个最外层的小页面，负责显示图示。
+
+  After adding to the iPhone home screen, tapping the icon embeds the
+  real MrLow&MsFum site inside this page (rather than navigating away),
+  which is what keeps it full-screen without the browser's address bar
+  and toolbar. This page exists because Apps Script sites are nested
+  inside several iframes, so iPhone can't see our custom icon there —
+  this outer page shows the icon instead.
+-->
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>两人的空间</title>
+
+  <!-- App 图示 / App icon -->
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
+
+  <!-- 让 iPhone 把它当成 App 打开，不显示浏览器网址列 -->
+  <!-- Makes iPhone open it like an app, without the browser address bar -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="两人的空间">
+
+  <!-- 只有从主屏幕图示打开时（standalone 模式）才自动转跳，
+       平常用 Safari 浏览时留在这一页，才能好好按「加入主屏幕」
+       Only auto-redirect when launched from the home screen icon
+       (standalone mode) — stay put during normal Safari browsing so
+       there's time to actually tap "Add to Home Screen" -->
+
+
+  <style>
+    body {
+      margin: 0;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #1a1a2e;
+      font-family: -apple-system, sans-serif;
+      color: #cbb8e8;
+    }
+  </style>
+</head>
+<body>
+  <p id="statusText">两人的空间</p>
+  <script>
+    const APP_URL = "https://script.google.com/macros/s/AKfycbyKfstACFxHNGpjbeR0jLYqTUIff3nf3QsII4Rss9pT-SWpJHoWG5erGgK6ddQ9YIZy/exec";
+
+    // window.navigator.standalone 是 iOS Safari 专用的属性：
+    // true 代表是「从主屏幕图示打开的」，不是平常在 Safari 浏览
+    // window.navigator.standalone is iOS-Safari-specific:
+    // true means it was launched from the home screen icon,
+    // not opened as a normal Safari tab
+    const isStandalone = window.navigator.standalone === true ||
+                          window.matchMedia('(display-mode: standalone)').matches;
+
+    if (isStandalone) {
+      document.getElementById('statusText').textContent = '正在打开两人的空间... / Opening...';
+      window.location.href = APP_URL;
+    } else {
+      // 平常用 Safari 打开：留在这一页，等你按「分享 → 加入主屏幕」
+      // Opened normally in Safari: stay here so you can Share → Add to Home Screen
+      document.getElementById('statusText').innerHTML =
+        '两人的空间<br><br>' +
+        '<span style="font-size:14px;">请按下方分享按钮，选「加入主屏幕」<br>' +
+        'Tap Share below, then "Add to Home Screen"</span><br><br>' +
+        '<a href="' + APP_URL + '" style="color:#cbb8e8;">或点这里直接进入网站 / or tap here to open now</a>';
+    }
+  </script>
+</body>
+</html>
