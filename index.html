@@ -104,6 +104,27 @@
   .comment-send { background: #B29CDB; color: #fff; border: none; border-radius: 999px; padding: 0 14px; font-size: 13px; cursor: pointer; }
   .loading-text { text-align: center; color: #B39FB0; font-size: 13px; padding: 20px; }
 
+  .post-header-row { display: flex; align-items: center; justify-content: space-between; }
+  .post-menu-btn {
+    background: none; border: none; font-size: 20px; font-weight: bold;
+    color: #B39FB0; cursor: pointer; padding: 4px 8px;
+  }
+  .dropdown-menu {
+    position: absolute; z-index: 1000; background: #fff; border-radius: 10px;
+    border: 0.5px solid #DCC8F0; box-shadow: 0 4px 16px rgba(0,0,0,0.18); overflow: hidden;
+  }
+  .dropdown-menu button {
+    display: block; width: 100%; padding: 10px 18px; background: none; border: none;
+    font-size: 14px; color: #C0455C; cursor: pointer; white-space: nowrap; text-align: left;
+  }
+  .media-item { position: relative; margin-top: 8px; }
+  .media-item img, .media-item video { margin-top: 0; }
+  .media-menu-btn {
+    position: absolute; top: 8px; right: 8px; width: 30px; height: 30px; border-radius: 50%;
+    background: rgba(0,0,0,0.55); color: #fff; border: none; font-size: 18px; font-weight: bold;
+    line-height: 26px; text-align: center; cursor: pointer; z-index: 5;
+  }
+
   /* 登入画面 / Login screen */
   .login-screen {
     position: fixed; inset: 0; z-index: 9999;
@@ -163,7 +184,7 @@ import {
   getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
-  getFirestore, collection, addDoc, getDocs, doc, deleteDoc, setDoc, getDoc,
+  getFirestore, collection, addDoc, getDocs, doc, deleteDoc, setDoc, getDoc, updateDoc,
   query, orderBy, serverTimestamp, onSnapshot
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import {
@@ -301,9 +322,12 @@ function buildPostCard(postId, post) {
   const initial = authorName.charAt(0).toUpperCase();
 
   card.innerHTML =
-    '<div class="post-author">' +
-      '<div class="avatar">' + initial + '</div>' +
-      '<div><strong style="font-size:13px;">' + authorName + '</strong></div>' +
+    '<div class="post-header-row">' +
+      '<div class="post-author">' +
+        '<div class="avatar">' + initial + '</div>' +
+        '<div><strong style="font-size:13px;">' + authorName + '</strong></div>' +
+      '</div>' +
+      '<button class="post-menu-btn" id="postMenuBtn-' + postId + '">⋯</button>' +
     '</div>' +
     '<p style="font-size:14px; margin:0 0 4px; white-space:pre-wrap;">' + escapeHtml(post.content || '') + '</p>' +
     '<div class="post-media" id="media-' + postId + '"></div>' +
@@ -316,23 +340,121 @@ function buildPostCard(postId, post) {
       '</div>' +
     '</div>';
 
+  card.querySelector('#postMenuBtn-' + postId).onclick = function(e) {
+    e.stopPropagation();
+    showDropdownMenu(e.currentTarget, [
+      { label: '🗑 删除帖子 / Delete post', onClick: function() { deletePost(postId, post); } }
+    ]);
+  };
+
   const mediaBox = card.querySelector('#media-' + postId);
-  (post.media || []).forEach(function(m) {
+  (post.media || []).forEach(function(m, idx) {
+    const wrap = document.createElement('div');
+    wrap.className = 'media-item';
+
     if (m.type === 'Video') {
       const v = document.createElement('video');
       v.src = m.url; v.controls = true;
-      mediaBox.appendChild(v);
+      wrap.appendChild(v);
     } else {
       const img = document.createElement('img');
       img.src = m.url;
-      mediaBox.appendChild(img);
+      wrap.appendChild(img);
     }
+
+    const menuBtn = document.createElement('button');
+    menuBtn.className = 'media-menu-btn';
+    menuBtn.innerHTML = '⋯';
+    menuBtn.onclick = function(e) {
+      e.stopPropagation();
+      showDropdownMenu(menuBtn, [
+        { label: '🗑 删除照片/影片 / Delete photo', onClick: function() { deleteMediaItem(postId, post, m); } }
+      ]);
+    };
+    wrap.appendChild(menuBtn);
+
+    mediaBox.appendChild(wrap);
   });
 
   renderReactions(postId, card.querySelector('#react-' + postId));
   loadComments(postId, card.querySelector('#comments-' + postId));
 
   return card;
+}
+
+// 通用的小选单（点旁边空白处会自动关闭）
+// A generic small dropdown menu (auto-closes when you tap elsewhere)
+function showDropdownMenu(anchorBtn, items) {
+  const existing = document.getElementById('dropdownMenu');
+  if (existing) existing.remove();
+
+  const menu = document.createElement('div');
+  menu.id = 'dropdownMenu';
+  menu.className = 'dropdown-menu';
+  items.forEach(function(item) {
+    const btn = document.createElement('button');
+    btn.textContent = item.label;
+    btn.onclick = function(e) {
+      e.stopPropagation();
+      menu.remove();
+      item.onClick();
+    };
+    menu.appendChild(btn);
+  });
+  document.body.appendChild(menu);
+
+  const rect = anchorBtn.getBoundingClientRect();
+  menu.style.top = (window.scrollY + rect.bottom + 4) + 'px';
+  menu.style.left = Math.max(8, rect.right - menu.offsetWidth) + 'px';
+
+  setTimeout(function() {
+    document.addEventListener('click', function closeMenu(e) {
+      if (!menu.contains(e.target)) {
+        menu.remove();
+        document.removeEventListener('click', closeMenu);
+      }
+    });
+  }, 0);
+}
+
+// 删除整篇帖子（连带留言、Emoji 反应、照片影片都会一起删掉）
+// Delete the whole post (comments, reactions, and its photos/videos all go with it)
+async function deletePost(postId, post) {
+  if (!confirm('确定要删除这篇帖子吗？删除后无法恢复。\nDelete this post? This cannot be undone.')) return;
+
+  try {
+    // 删掉帖子底下的留言 / delete the post's comments
+    const commentsSnap = await getDocs(collection(db, 'posts', postId, 'comments'));
+    for (const c of commentsSnap.docs) await deleteDoc(c.ref);
+
+    // 删掉帖子底下的 Emoji 反应 / delete the post's reactions
+    const reactionsSnap = await getDocs(collection(db, 'posts', postId, 'reactions'));
+    for (const r of reactionsSnap.docs) await deleteDoc(r.ref);
+
+    // 删掉照片/影片本身 / delete the actual photo/video files
+    for (const m of (post.media || [])) {
+      try { await deleteObject(ref(storage, m.path)); } catch (e) { /* 文件可能已经不见了，不影响 / file may already be gone */ }
+    }
+
+    // 最后删掉帖子本身 / finally delete the post itself
+    await deleteDoc(doc(db, 'posts', postId));
+  } catch (err) {
+    alert('删除失败 / Delete failed: ' + err.message);
+  }
+}
+
+// 删除帖子里的其中一张照片/影片（帖子本身留着）
+// Delete a single photo/video from a post (the post itself stays)
+async function deleteMediaItem(postId, post, mediaItem) {
+  if (!confirm('确定要删除这张照片吗？删除后无法恢复。\nDelete this photo? This cannot be undone.')) return;
+
+  try {
+    await deleteObject(ref(storage, mediaItem.path));
+    const updatedMedia = (post.media || []).filter(function(m) { return m.path !== mediaItem.path; });
+    await updateDoc(doc(db, 'posts', postId), { media: updatedMedia });
+  } catch (err) {
+    alert('删除失败 / Delete failed: ' + err.message);
+  }
 }
 
 // ===== Emoji 反应 / Reactions =====
