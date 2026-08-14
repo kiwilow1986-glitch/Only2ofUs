@@ -140,6 +140,18 @@
     display: flex; align-items: center; gap: 10px;
   }
   .login-error { color: #e08a9a; font-size: 13px; margin-top: 16px; }
+
+  .tap-enter-screen {
+    position: fixed; inset: 0; z-index: 9998;
+    background: #1a1a2e;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: #cbb8e8; text-align: center; cursor: pointer;
+    transition: opacity 0.6s ease;
+  }
+  .tap-enter-screen.hidden { opacity: 0; pointer-events: none; }
+  .tap-enter-screen h1 { font-size: 22px; }
+  .tap-enter-screen p { font-size: 14px; animation: tap-pulse 1.6s ease-in-out infinite; }
+  @keyframes tap-pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
 </style>
 </head>
 <body>
@@ -153,6 +165,16 @@
   </button>
   <p class="login-error" id="loginError"></p>
 </div>
+
+<!-- 点击进入画面：不管是不是第一次登入都会经过这里，确保音乐一定能开始播放 -->
+<!-- Tap-to-enter screen: always shown regardless of fresh or returning login, so music reliably gets a user tap to start from -->
+<div class="tap-enter-screen" id="tapEnterScreen" style="display:none;">
+  <h1>两人的空间</h1>
+  <p>点击进入 / Tap to enter</p>
+</div>
+
+<!-- 背景音乐 / Background music -->
+<audio id="bgMusic" src="%E6%80%BB%E6%9C%89%E4%B8%80%E5%A4%A9.mp3" loop></audio>
 
 <div class="container" id="mainContent" style="display:none;">
 
@@ -255,11 +277,43 @@ document.getElementById('googleLoginBtn').onclick = function() {
   });
 };
 
+// 让音量慢慢改变，而不是一下子跳掉 / smoothly change volume instead of jumping
+function fadeVolume(audioEl, targetVolume, durationMs) {
+  const startVolume = audioEl.volume;
+  const startTime = Date.now();
+  const step = function() {
+    const progress = Math.min(1, (Date.now() - startTime) / durationMs);
+    audioEl.volume = startVolume + (targetVolume - startVolume) * progress;
+    if (progress < 1) requestAnimationFrame(step);
+  };
+  step();
+}
+
+// 点击进入画面：点了才开始播放音乐、才真正进网站
+// Tap-to-enter: tapping is what starts the music and reveals the site
+document.getElementById('tapEnterScreen').addEventListener('click', function enterApp() {
+  const screen = document.getElementById('tapEnterScreen');
+  const bgMusic = document.getElementById('bgMusic');
+
+  bgMusic.volume = 1.0;
+  bgMusic.play().catch(function() {
+    // 有些浏览器还是会拒绝播放，忽略就好，不影响其他功能 / some browsers may still refuse — ignore
+  });
+
+  screen.classList.add('hidden');
+  setTimeout(function() { screen.style.display = 'none'; }, 700);
+
+  document.getElementById('mainContent').style.display = 'block';
+
+  // 进入网站后，把背景音乐音量慢慢调低 / gently fade the music down once inside
+  setTimeout(function() { fadeVolume(bgMusic, 0.3, 1200); }, 500);
+});
+
 onAuthStateChanged(auth, function(user) {
   if (user && ALLOWED_USERS.indexOf(user.email) !== -1) {
     currentUser = user;
     document.getElementById('loginScreen').style.display = 'none';
-    document.getElementById('mainContent').style.display = 'block';
+    document.getElementById('tapEnterScreen').style.display = 'flex';
     loadFeed();
     setupNotifications();
   } else if (user) {
