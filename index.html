@@ -191,6 +191,9 @@ import {
 import {
   getStorage, ref, uploadBytes, getDownloadURL, deleteObject
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-storage.js";
+import {
+  getMessaging, getToken, isSupported as messagingIsSupported
+} from "https://www.gstatic.com/firebasejs/10.13.0/firebase-messaging.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCH6KWeqZtoDn0rhKdF3-HnTAuq838MJIE",
@@ -209,11 +212,40 @@ const storage = getStorage(app);
 const ALLOWED_USERS = ["kiwilow1986@gmail.com", "cherylfum@gmail.com"];
 const DISPLAY_NAMES = { "kiwilow1986@gmail.com": "Mr Low", "cherylfum@gmail.com": "Ms Fum" };
 const EMOJI_MAP = { Love: "❤️", Like: "👍", Support: "💪", Hug: "🤗", Angry: "😡" };
+const VAPID_KEY = "BGtWMhGyzkZB6LBc982Ody4VwGgGmgENPK_QDgkEPqmPfS-IK8-X67n8wAW2MUgI-E_HcarKRPdGO-1spyAYjeQ";
 
 let currentUser = null;
 let pendingMedia = []; // { file, type, previewUrl }
 
 function displayName(email) { return DISPLAY_NAMES[email] || email; }
+
+// ===== 推播通知：跟你要权限、记住这台手机 =====
+// ===== Push notifications: ask permission, remember this device =====
+async function setupNotifications() {
+  try {
+    const supported = await messagingIsSupported();
+    if (!supported) return; // 这个浏览器不支援推播 / this browser doesn't support push
+
+    const registration = await navigator.serviceWorker.register('firebase-messaging-sw.js');
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') return;
+
+    const messaging = getMessaging(app);
+    const token = await getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: registration });
+    if (token) {
+      // 把这个装置的推播代码存进这个人自己的资料里，Cloud Function 之后会用它来发通知
+      // Save this device's push token under the user's own doc — the
+      // Cloud Function will use it later to actually send notifications
+      await setDoc(doc(db, 'users', currentUser.uid), {
+        email: currentUser.email,
+        fcmToken: token
+      }, { merge: true });
+    }
+  } catch (err) {
+    // 通知功能失败不影响网站其他部分正常使用 / notification setup failing shouldn't break the rest of the app
+    console.log('notification setup failed:', err.message);
+  }
+}
 
 // ===== 登入 / Login =====
 document.getElementById('googleLoginBtn').onclick = function() {
@@ -229,6 +261,7 @@ onAuthStateChanged(auth, function(user) {
     document.getElementById('loginScreen').style.display = 'none';
     document.getElementById('mainContent').style.display = 'block';
     loadFeed();
+    setupNotifications();
   } else if (user) {
     document.getElementById('loginError').textContent = '这个账号不在允许名单里 / This account is not authorized';
     signOut(auth);
