@@ -451,7 +451,7 @@ function buildPostCard(postId, post) {
       '</div>' +
       '<button class="post-menu-btn" id="postMenuBtn-' + postId + '">⋯</button>' +
     '</div>' +
-    '<p style="font-size:14px; margin:0 0 4px; white-space:pre-wrap;">' + escapeHtml(post.content || '') + '</p>' +
+    '<p id="content-' + postId + '" style="font-size:14px; margin:0 0 4px; white-space:pre-wrap;">' + escapeHtml(post.content || '') + '</p>' +
     '<div class="post-media" id="media-' + postId + '"></div>' +
     '<div class="reactions-row" id="react-' + postId + '"></div>' +
     '<div class="comments-box">' +
@@ -465,6 +465,7 @@ function buildPostCard(postId, post) {
   card.querySelector('#postMenuBtn-' + postId).onclick = function(e) {
     e.stopPropagation();
     showDropdownMenu(e.currentTarget, [
+      { label: '✏️ 编辑帖子 / Edit post', onClick: function() { startEditPost(postId, post, card); } },
       { label: '🗑 删除帖子 / Delete post', onClick: function() { deletePost(postId, post); } }
     ]);
   };
@@ -544,6 +545,39 @@ function showDropdownMenu(anchorBtn, items) {
       }
     });
   }, 0);
+}
+
+// 编辑帖子的文字（照片/影片不透过这里改，放错了直接用上面的删除功能）
+// Edit a post's text (photos/videos aren't touched here — if one's wrong, just delete it directly)
+function startEditPost(postId, post, card) {
+  const p = card.querySelector('#content-' + postId);
+  if (!p) return;
+
+  const wrap = document.createElement('div');
+  wrap.innerHTML =
+    '<textarea id="editArea-' + postId + '" rows="3" style="width:100%;">' + escapeHtml(post.content || '') + '</textarea>' +
+    '<div style="display:flex; gap:8px; margin-top:6px;">' +
+      '<button id="editSave-' + postId + '" style="background:#B8935F; color:#1C1B23; border:none; border-radius:999px; padding:6px 16px; font-size:13px; cursor:pointer;">保存 / Save</button>' +
+      '<button id="editCancel-' + postId + '" style="background:none; border:0.5px solid #3A3540; color:#E8E3D8; border-radius:999px; padding:6px 16px; font-size:13px; cursor:pointer;">取消 / Cancel</button>' +
+    '</div>';
+
+  p.replaceWith(wrap);
+
+  wrap.querySelector('#editCancel-' + postId).onclick = function() {
+    wrap.replaceWith(p);
+  };
+
+  wrap.querySelector('#editSave-' + postId).onclick = async function() {
+    const newContent = wrap.querySelector('#editArea-' + postId).value.trim();
+    try {
+      await updateDoc(doc(db, 'posts', postId), { content: newContent });
+      post.content = newContent;
+      p.textContent = newContent;
+      wrap.replaceWith(p);
+    } catch (err) {
+      alert('保存失败 / Save failed: ' + err.message);
+    }
+  };
 }
 
 // 删除整篇帖子（连带留言、Emoji 反应、照片影片都会一起删掉）
