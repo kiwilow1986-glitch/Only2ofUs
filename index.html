@@ -564,20 +564,32 @@ function renderReactions(postId, box) {
 }
 
 async function toggleReaction(postId, emojiType, box) {
+  // 直接看画面上现在是不是已经选中，不用先问 Google（这样才不用等网路）
+  // Read the current state directly from the screen instead of asking
+  // Google first (this is what keeps it from waiting on the network)
+  const targetBtn = box.querySelector('.react-btn[data-type="' + emojiType + '"]');
+  const already = !!(targetBtn && targetBtn.classList.contains('selected'));
+
+  // 立刻更新画面 / update the screen immediately
+  if (already) {
+    applySelectedState(box, null);
+  } else {
+    applySelectedState(box, emojiType);
+    playPopSound(emojiType);
+  }
+
+  // 背景偷偷跟 Firestore 同步，不会挡住画面 / sync to Firestore in the background, without blocking the UI
+  const reactionRef = doc(db, 'posts', postId, 'reactions', currentUser.uid);
   try {
-    const reactionRef = doc(db, 'posts', postId, 'reactions', currentUser.uid);
-    const snap = await getDoc(reactionRef);
-    const already = snap.exists() && snap.data().emojiType === emojiType;
     if (already) {
       await deleteDoc(reactionRef);
-      applySelectedState(box, null);
     } else {
       await setDoc(reactionRef, { emojiType: emojiType, author: currentUser.email });
-      applySelectedState(box, emojiType);
-      playPopSound(emojiType);
     }
   } catch (err) {
-    alert('Emoji 反应失败 / Reaction failed: ' + err.message);
+    // 同步失败就把画面改回去，并告诉你 / if the sync fails, revert the screen and let you know
+    applySelectedState(box, already ? emojiType : null);
+    alert('Emoji 反应失败，请重试 / Reaction failed, please try again: ' + err.message);
   }
 }
 
