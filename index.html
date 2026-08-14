@@ -92,6 +92,22 @@
     font-size: 12px; font-weight: bold; color: #7A4E6B;
   }
   .post-media img, .post-media video { width: 100%; border-radius: 12px; margin-top: 8px; display: block; }
+  .post-media.multi-media {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
+  }
+  .post-media.multi-media .media-item {
+    flex: 0 0 82%;
+    aspect-ratio: 4 / 5;
+    scroll-snap-align: start;
+    margin-top: 8px;
+  }
+  .post-media.multi-media .media-item img,
+  .post-media.multi-media .media-item video { width: 100%; height: 100%; object-fit: cover; }
   .reactions-row { display: flex; gap: 4px; margin-top: 10px; flex-wrap: wrap; }
   .react-btn { background: none; border: none; padding: 4px 8px; cursor: pointer; border-radius: 999px; transition: padding 0.25s ease, opacity 0.25s ease, margin 0.25s ease; }
   .react-btn span.emoji { font-size: 22px; display: inline-block; transition: font-size 0.25s cubic-bezier(.34,1.56,.64,1), opacity 0.25s ease, filter 0.25s ease; }
@@ -403,6 +419,24 @@ function loadFeed() {
   });
 }
 
+// 影片滑到画面 75% 以上就自动播放，滑走就暂停
+// Auto-play a video once 75%+ of it is on screen; pause when it scrolls away
+const videoAutoplayObserver = (typeof IntersectionObserver !== 'undefined')
+  ? new IntersectionObserver(function(entries) {
+      entries.forEach(function(entry) {
+        if (entry.isIntersecting && entry.intersectionRatio >= 0.75) {
+          entry.target.play().catch(function() { /* 有些浏览器可能拒绝，忽略就好 / some browsers may refuse — ignore */ });
+        } else {
+          entry.target.pause();
+        }
+      });
+    }, { threshold: [0, 0.75, 1] })
+  : null;
+
+function observeVideoForAutoplay(videoEl) {
+  if (videoAutoplayObserver) videoAutoplayObserver.observe(videoEl);
+}
+
 function buildPostCard(postId, post) {
   const card = document.createElement('div');
   card.className = 'card';
@@ -436,6 +470,9 @@ function buildPostCard(postId, post) {
   };
 
   const mediaBox = card.querySelector('#media-' + postId);
+  if ((post.media || []).length > 1) {
+    mediaBox.classList.add('multi-media');
+  }
   (post.media || []).forEach(function(m, idx) {
     const wrap = document.createElement('div');
     wrap.className = 'media-item';
@@ -443,7 +480,11 @@ function buildPostCard(postId, post) {
     if (m.type === 'Video') {
       const v = document.createElement('video');
       v.src = m.url; v.controls = true;
+      v.muted = true;       // 手机规定：滑到自动播放的影片一定要先静音 / mobile browsers require this for scroll-triggered autoplay
+      v.playsInline = true; // 让影片在原地播放，不会自动跳成全萤幕 / plays inline instead of jumping to fullscreen on iOS
+      v.loop = true;
       wrap.appendChild(v);
+      observeVideoForAutoplay(v);
     } else {
       const img = document.createElement('img');
       img.src = m.url;
