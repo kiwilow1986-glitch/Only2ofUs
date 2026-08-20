@@ -168,6 +168,9 @@
   .tap-enter-screen h1 { font-size: 22px; }
   .tap-enter-screen p { font-size: 14px; animation: tap-pulse 1.6s ease-in-out infinite; }
   @keyframes tap-pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+
+  .title-banner { text-align: center; padding: 20px 12px 6px; }
+  .title-banner img { max-width: 92%; height: auto; filter: drop-shadow(0 4px 10px rgba(0,0,0,0.5)); }
 </style>
 </head>
 <body>
@@ -193,6 +196,10 @@
 <audio id="bgMusic" src="%E6%80%BB%E6%9C%89%E4%B8%80%E5%A4%A9.mp3" loop></audio>
 
 <div class="container" id="mainContent" style="display:none;">
+
+  <div class="title-banner">
+    <img src="title-banner.png" alt="属于我们两人的空间">
+  </div>
 
   <div class="card">
     <textarea id="postContent" rows="3" placeholder="写下这一刻的心情... / Write what's on your mind..."></textarea>
