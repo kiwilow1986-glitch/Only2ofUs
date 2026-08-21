@@ -297,17 +297,20 @@ function displayName(email) { return DISPLAY_NAMES[email] || email; }
 // ===== Push notifications: ask permission, remember this device =====
 async function setupNotifications() {
   try {
+    // 通知权限要放在最前面第一步问，越靠近点击那一刻越好
+    // Ask for notification permission as the very first step — the
+    // closer to the actual tap, the better
+    showNotifDebug('1. current permission before ask: ' + Notification.permission);
+    const permission = await Notification.requestPermission();
+    showNotifDebug('2. permission after ask: ' + permission);
+    if (permission !== 'granted') return;
+
     const supported = await messagingIsSupported();
-    showNotifDebug('1. messaging supported: ' + supported);
+    showNotifDebug('3. messaging supported: ' + supported);
     if (!supported) return; // 这个浏览器不支援推播 / this browser doesn't support push
 
     const registration = await navigator.serviceWorker.register('firebase-messaging-sw.js');
-    showNotifDebug('2. service worker registered: ' + !!registration);
-
-    showNotifDebug('3. current permission before ask: ' + Notification.permission);
-    const permission = await Notification.requestPermission();
-    showNotifDebug('4. permission after ask: ' + permission);
-    if (permission !== 'granted') return;
+    showNotifDebug('4. service worker registered: ' + !!registration);
 
     const messaging = getMessaging(app);
     const token = await getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: registration });
@@ -374,6 +377,13 @@ document.getElementById('tapEnterScreen').addEventListener('click', function ent
     // 有些浏览器还是会拒绝播放，忽略就好，不影响其他功能 / some browsers may still refuse — ignore
   });
 
+  // 通知权限一定要紧接在这个点击里面要求，不能等其他非同步流程跑完才问，
+  // 不然 iOS 会直接判定不算数，自动拒绝、连问都不问
+  // The notification permission must be requested directly inside this
+  // click — not after other async steps finish — or iOS silently denies
+  // it without ever showing the prompt
+  setupNotifications();
+
   screen.classList.add('hidden');
   setTimeout(function() { screen.style.display = 'none'; }, 700);
 
@@ -389,7 +399,6 @@ onAuthStateChanged(auth, function(user) {
     document.getElementById('loginScreen').style.display = 'none';
     document.getElementById('tapEnterScreen').style.display = 'flex';
     loadFeed();
-    setupNotifications();
   } else if (user) {
     document.getElementById('loginError').textContent = '这个账号不在允许名单里 / This account is not authorized';
     signOut(auth);
