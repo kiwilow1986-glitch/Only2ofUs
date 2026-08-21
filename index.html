@@ -300,21 +300,16 @@ async function setupNotifications() {
     // 通知权限要放在最前面第一步问，越靠近点击那一刻越好
     // Ask for notification permission as the very first step — the
     // closer to the actual tap, the better
-    showNotifDebug('1. current permission before ask: ' + Notification.permission);
     const permission = await Notification.requestPermission();
-    showNotifDebug('2. permission after ask: ' + permission);
     if (permission !== 'granted') return;
 
     const supported = await messagingIsSupported();
-    showNotifDebug('3. messaging supported: ' + supported);
     if (!supported) return; // 这个浏览器不支援推播 / this browser doesn't support push
 
     const registration = await navigator.serviceWorker.register('firebase-messaging-sw.js');
-    showNotifDebug('4. service worker registered: ' + !!registration);
 
     const messaging = getMessaging(app);
     const token = await getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: registration });
-    showNotifDebug('5. got token: ' + (token ? 'yes (' + token.slice(0,12) + '...)' : 'no'));
     if (token) {
       // 把这个装置的推播代码存进这个人自己的资料里，Cloud Function 之后会用它来发通知
       // Save this device's push token under the user's own doc — the
@@ -323,27 +318,10 @@ async function setupNotifications() {
         email: currentUser.email,
         fcmToken: token
       }, { merge: true });
-      showNotifDebug('6. token saved to Firestore ✓');
     }
   } catch (err) {
-    showNotifDebug('ERROR: ' + err.message);
+    // 通知设定失败不影响网站其他部分正常使用 / notification setup failing shouldn't affect the rest of the app
   }
-}
-
-// 临时侦错用：把通知设定过程直接显示在画面上，方便截图
-// Temporary debug helper — shows the notification setup steps directly
-// on screen, so it's easy to screenshot
-function showNotifDebug(line) {
-  let box = document.getElementById('notifDebugBox');
-  if (!box) {
-    box = document.createElement('div');
-    box.id = 'notifDebugBox';
-    box.style.cssText = 'position:fixed; bottom:8px; left:8px; right:8px; z-index:99999; background:rgba(0,0,0,0.85); color:#E8DCC0; font-size:11px; padding:8px; border-radius:8px; max-height:160px; overflow-y:auto; font-family:monospace;';
-    document.body.appendChild(box);
-  }
-  const p = document.createElement('div');
-  p.textContent = line;
-  box.appendChild(p);
 }
 
 // ===== 登入 / Login =====
