@@ -141,10 +141,60 @@
   .react-btn { background: none; border: none; padding: 4px 8px; cursor: pointer; border-radius: 999px; transition: padding 0.25s ease, opacity 0.25s ease, margin 0.25s ease; }
   .react-btn span.emoji { font-size: 22px; display: inline-block; transition: font-size 0.25s cubic-bezier(.34,1.56,.64,1), opacity 0.25s ease, filter 0.25s ease; }
   .react-btn.selected span.emoji { font-size: 30px; filter: drop-shadow(0 2px 5px rgba(184,147,95,0.6)) saturate(1.3); }
+
+  /* 每个表情各自不同的小动作，点选时播放一次 */
+  /* Each emoji gets its own little flourish, played once on tap */
+  @keyframes anim-fly-spin {
+    0% { transform: translateY(0) rotate(0deg) scale(1); }
+    55% { transform: translateY(-34px) rotate(300deg) scale(1.3); }
+    100% { transform: translateY(-4px) rotate(360deg) scale(1); }
+  }
+  @keyframes anim-nod {
+    0%, 100% { transform: rotate(0deg); }
+    30% { transform: rotate(-18deg); }
+    55% { transform: rotate(10deg); }
+    75% { transform: rotate(-6deg); }
+  }
+  @keyframes anim-flex {
+    0%, 100% { transform: scale(1); }
+    45% { transform: scale(1.55); }
+    70% { transform: scale(0.95); }
+  }
+  @keyframes anim-wobble {
+    0%, 100% { transform: rotate(0deg); }
+    25% { transform: rotate(-14deg); }
+    50% { transform: rotate(0deg); }
+    75% { transform: rotate(14deg); }
+  }
+  @keyframes anim-shake {
+    0%, 100% { transform: translateX(0) rotate(0deg); }
+    20% { transform: translateX(-4px) rotate(-9deg); }
+    40% { transform: translateX(4px) rotate(9deg); }
+    60% { transform: translateX(-4px) rotate(-9deg); }
+    80% { transform: translateX(4px) rotate(9deg); }
+  }
+  .react-anim-Love { animation: anim-fly-spin 0.6s ease; }
+  .react-anim-Like { animation: anim-nod 0.5s ease; }
+  .react-anim-Support { animation: anim-flex 0.5s ease; }
+  .react-anim-Hug { animation: anim-wobble 0.6s ease; }
+  .react-anim-Angry { animation: anim-shake 0.45s ease; }
+  @media (prefers-reduced-motion: reduce) {
+    .react-anim-Love, .react-anim-Like, .react-anim-Support, .react-anim-Hug, .react-anim-Angry { animation: none; }
+  }
   .react-btn.dimmed { padding: 2px 3px; margin: 0 -2px; }
   .react-btn.dimmed span.emoji { font-size: 15px; opacity: 0.55; filter: grayscale(35%); }
   .comments-box { border-top: 0.5px solid #3A3540; margin-top: 10px; padding-top: 8px; }
   .comment-line { font-size: 13px; color: #A89A8C; margin: 4px 0; white-space: pre-wrap; }
+  @keyframes comment-pop-in {
+    0% { opacity: 0; transform: translateY(10px) scale(0.9); }
+    60% { opacity: 1; transform: translateY(-2px) scale(1.03); }
+    100% { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .comment-line.comment-new { animation: comment-pop-in 0.4s ease; }
+  @media (prefers-reduced-motion: reduce) {
+    .comment-line.comment-new { animation: none; }
+  }
+  .comment-send.just-sent { animation: anim-flex 0.4s ease; }
   .comment-input-row { display: flex; gap: 6px; margin-top: 8px; align-items: flex-end; }
   .comment-input-row textarea {
     flex: 1; resize: none; min-height: 38px; max-height: 120px;
@@ -505,7 +555,7 @@ function buildPostCard(postId, post) {
       '<div id="comments-' + postId + '"></div>' +
       '<div class="comment-input-row">' +
         '<textarea rows="1" placeholder="写留言... / Write a comment..." id="commentInput-' + postId + '" oninput="this.style.height=\'auto\';this.style.height=this.scrollHeight+\'px\';"></textarea>' +
-        '<button class="comment-send" onclick="window.submitComment(\'' + postId + '\')">送出</button>' +
+        '<button class="comment-send" id="commentSend-' + postId + '" onclick="window.submitComment(\'' + postId + '\')">送出</button>' +
       '</div>' +
     '</div>';
 
@@ -685,6 +735,21 @@ function renderReactions(postId, box) {
   });
 }
 
+// 播放这个 Emoji 专属的小动作 / Play this emoji's own little animation
+function playReactionAnimation(btn, emojiType) {
+  if (!btn) return;
+  const emojiSpan = btn.querySelector('.emoji');
+  if (!emojiSpan) return;
+  const className = 'react-anim-' + emojiType;
+  emojiSpan.classList.remove(className); // 万一还没播完又点了一次，先重置 / reset in case it's still mid-animation
+  void emojiSpan.offsetWidth; // 强迫浏览器重新计算一次，动画才会重新播放 / force a reflow so the animation restarts
+  emojiSpan.classList.add(className);
+  emojiSpan.addEventListener('animationend', function done() {
+    emojiSpan.classList.remove(className);
+    emojiSpan.removeEventListener('animationend', done);
+  });
+}
+
 async function toggleReaction(postId, emojiType, box) {
   // 直接看画面上现在是不是已经选中，不用先问 Google（这样才不用等网路）
   // Read the current state directly from the screen instead of asking
@@ -698,6 +763,7 @@ async function toggleReaction(postId, emojiType, box) {
   } else {
     applySelectedState(box, emojiType);
     playPopSound(emojiType);
+    playReactionAnimation(targetBtn, emojiType);
   }
 
   // 背景偷偷跟 Firestore 同步，不会挡住画面 / sync to Firestore in the background, without blocking the UI
@@ -786,16 +852,35 @@ function applySelectedState(box, selectedType) {
 // ===== 留言 / Comments =====
 function loadComments(postId, box) {
   const q = query(collection(db, 'posts', postId, 'comments'), orderBy('timestamp', 'asc'));
+  let firstLoad = true;
   onSnapshot(q, function(snapshot) {
+    // 只有真正「新增」的留言才播放跳入动画，不会让旧留言每次都重播一次
+    // Only genuinely new comments play the pop-in animation — old ones
+    // don't replay it every time the list re-renders
+    const newlyAddedIds = firstLoad ? [] : snapshot.docChanges()
+      .filter(function(change) { return change.type === 'added'; })
+      .map(function(change) { return change.doc.id; });
+    firstLoad = false;
+
     box.innerHTML = '';
     snapshot.forEach(function(docSnap) {
       const c = docSnap.data();
       const line = document.createElement('p');
       line.className = 'comment-line';
+      if (newlyAddedIds.indexOf(docSnap.id) !== -1) {
+        line.classList.add('comment-new');
+      }
       line.textContent = displayName(c.author) + ': ' + c.content;
       box.appendChild(line);
     });
   });
+}
+
+// 送出留言时的小音效 / A short sound for sending a comment
+function playSendSound() {
+  try {
+    playTone('sine', 520, 0, 0.1, 0.12, 780);
+  } catch (e) { /* 忽略即可 / ignore */ }
 }
 
 window.submitComment = async function(postId) {
@@ -804,6 +889,17 @@ window.submitComment = async function(postId) {
   if (!content) return;
   input.value = '';
   input.style.height = 'auto';
+
+  // 送出的瞬间给一点反馈：按钮跳一下 + 一声轻响
+  // A bit of feedback right at the moment of sending: button pulses + a soft chime
+  const sendBtn = document.getElementById('commentSend-' + postId);
+  if (sendBtn) {
+    sendBtn.classList.remove('just-sent');
+    void sendBtn.offsetWidth;
+    sendBtn.classList.add('just-sent');
+  }
+  playSendSound();
+
   await addDoc(collection(db, 'posts', postId, 'comments'), {
     author: currentUser.email,
     content: content,
