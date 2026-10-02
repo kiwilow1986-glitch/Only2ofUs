@@ -293,6 +293,28 @@
   @media (prefers-reduced-motion: reduce) {
     .reaction-burst, .comment-burst { display: none; }
   }
+  /* 表情飛到帖子正中間、播放完整動畫影片，播完再飛回原位 */
+  /* The emoji flies to the center of the post, plays its full master
+     animation video, then flies back to where it started */
+  .fly-overlay {
+    position: fixed;
+    left: 0; top: 0;
+    pointer-events: none;
+    z-index: 999;
+    will-change: transform, opacity;
+    transform-origin: center center;
+    background: #000;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .fly-overlay video {
+    width: 100%; height: 100%;
+    object-fit: contain;
+    display: block;
+    mix-blend-mode: screen;
+  }
+  .video-pool { position: fixed; left: -9999px; top: -9999px; width: 1px; height: 1px; overflow: hidden; }
+  .react-btn.flying-source { opacity: 0.15; }
   .react-btn.dimmed { padding: 2px 3px; margin: 0 -2px; }
   .react-btn.dimmed span.emoji { width: 18px; height: 18px; opacity: 0.55; filter: grayscale(35%); }
   .comments-box { border-top: 0.5px solid #3A3540; margin-top: 10px; padding-top: 8px; }
@@ -388,6 +410,9 @@
 <!-- 背景音乐 / Background music -->
 <audio id="bgMusic" src="music.mp3" loop></audio>
 
+<!-- 預先載入的 5 個表情動畫影片，平常藏在畫面外 / preloaded master animation videos, hidden off-screen until used -->
+<div class="video-pool" id="videoPool"></div>
+
 <div class="container" id="mainContent" style="display:none;">
 
   <div class="title-banner">
@@ -459,6 +484,15 @@ const EMOJI_MAP = {
 // 每种反应背景闪烁时用的"意象" Emoji / the thematic emoji used for each reaction's background flicker
 // EMOJI_ECHO_MAP 已移除：回音效果直接沿用 EMOJI_MAP 同一張圖，不再用不同的符號
 // EMOJI_ECHO_MAP removed: the echo now reuses the same EMOJI_MAP image instead of a mismatched symbol
+// 五個 MASTER 動畫影片檔案（放在跟 index.html 同一個資料夾）
+// The 5 MASTER animation video files (kept alongside index.html, same folder)
+const VIDEO_MAP = {
+  Love: "LOVE_MASTER.mp4",
+  Like: "LIKE_MASTER.mp4",
+  Support: "SUPPORT_MASTER.mp4",
+  Hug: "HUG_MASTER.mp4",
+  Angry: "ANGRY_MASTER.mp4"
+};
 const VAPID_KEY = "BGtWMhGyzkZB6LBc982Ody4VwGgGmgENPK_QDgkEPqmPfS-IK8-X67n8wAW2MUgI-E_HcarKRPdGO-1spyAYjeQ";
 
 let currentUser = null;
@@ -839,6 +873,149 @@ async function deleteMediaItem(postId, post, mediaItem) {
 }
 
 // ===== Emoji 反应 / Reactions =====
+// ---- 預先把 5 個 MASTER 影片都準備好，各自可以借出多份 ----
+// ---- 避免兩篇貼文同時用同一種表情時互相搶用同一個 <video> ----
+// Prepares all 5 MASTER videos ahead of time. Each type keeps a small
+// pool of reusable <video> elements, so two different posts reacting
+// with the SAME emoji type at the same time don't fight over one
+// shared element.
+const videoPoolEl = document.getElementById('videoPool');
+const videoElementsPool = {};
+Object.keys(VIDEO_MAP).forEach(function(type) { videoElementsPool[type] = []; });
+
+function createPooledVideo(type) {
+  const v = document.createElement('video');
+  v.src = VIDEO_MAP[type];
+  v.muted = true;
+  v.playsInline = true;
+  v.setAttribute('playsinline', '');
+  v.preload = 'auto';
+  v.load();
+  videoPoolEl.appendChild(v);
+  return v;
+}
+// 先幫每一種都預先建好、預載一份 / pre-warm one instance per type
+Object.keys(VIDEO_MAP).forEach(function(type) { videoElementsPool[type].push(createPooledVideo(type)); });
+
+function acquireVideo(type) {
+  const pool = videoElementsPool[type];
+  if (pool.length > 0) return pool.pop();
+  return createPooledVideo(type); // 不夠用就臨時多建一份 / make an extra one on demand
+}
+function releaseVideo(type, v) {
+  videoPoolEl.appendChild(v);
+  videoElementsPool[type].push(v);
+}
+
+// 每篇貼文同時只允許一個表情在飛/播放中，換選別的表情時，前一個會瞬間消失，不會疊在一起
+// Each post allows only one flying/playing emoji at a time — picking a
+// different one makes the previous one disappear instantly instead of
+// overlapping with it
+const flightState = {}; // key: postId -> { overlay, video, type, sourceBtn, timers }
+const flyToCenterDuration = 280;
+const returnDuration = 250;
+const centerScale = 5;
+const centerOpacity = 0.65;
+const restScale = 1;
+const restOpacity = 1;
+const targetPlaySeconds = 3; // 原片 5 秒，加速壓縮成 3 秒播完 / source is 5s, sped up to finish in ~3s
+
+function playFlyToCenter(postId, emojiType, sourceBtn) {
+  if (!VIDEO_MAP[emojiType]) return;
+  const card = sourceBtn.closest('.card');
+  if (!card) return;
+
+  // 如果這篇貼文已經有表情在飛，先瞬間收掉再開始新的
+  if (flightState[postId]) {
+    cleanupFlight(postId, true);
+  }
+
+  const video = acquireVideo(emojiType);
+  const emojiSpan = sourceBtn.querySelector('.emoji');
+  const startRect = emojiSpan.getBoundingClientRect();
+  const cardRect = card.getBoundingClientRect();
+
+  const postCenterX = cardRect.left + cardRect.width / 2;
+  const postCenterY = cardRect.top + cardRect.height / 2;
+  const startW = startRect.width;
+  const startH = startRect.height;
+  const startCenterX = startRect.left + startW / 2;
+  const startCenterY = startRect.top + startH / 2;
+  const deltaX = postCenterX - startCenterX;
+  const deltaY = postCenterY - startCenterY;
+
+  sourceBtn.classList.add('flying-source');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'fly-overlay';
+  overlay.style.width = startW + 'px';
+  overlay.style.height = startH + 'px';
+  overlay.style.left = startRect.left + 'px';
+  overlay.style.top = startRect.top + 'px';
+  overlay.style.opacity = restOpacity;
+  overlay.style.transform = 'translate(0px, 0px) scale(' + restScale + ') rotate(0deg)';
+  overlay.appendChild(video);
+  document.body.appendChild(overlay);
+
+  flightState[postId] = { overlay: overlay, sourceBtn: sourceBtn, video: video, type: emojiType, timers: [] };
+
+  overlay.style.transition = 'transform ' + flyToCenterDuration + 'ms cubic-bezier(.34,1.56,.64,1), opacity ' + flyToCenterDuration + 'ms ease';
+  requestAnimationFrame(function() {
+    requestAnimationFrame(function() {
+      overlay.style.transform = 'translate(' + deltaX + 'px, ' + deltaY + 'px) scale(' + centerScale + ') rotate(6deg)';
+      overlay.style.opacity = centerOpacity;
+    });
+  });
+
+  const t1 = setTimeout(function() {
+    overlay.style.transition = 'transform 120ms ease-out, opacity 120ms ease-out';
+    overlay.style.transform = 'translate(' + deltaX + 'px, ' + deltaY + 'px) scale(' + centerScale + ') rotate(0deg)';
+    overlay.style.opacity = '1';
+
+    video.currentTime = 0;
+    const playbackRate = (video.duration && isFinite(video.duration) && video.duration > 0)
+      ? (video.duration / targetPlaySeconds) : 1;
+    video.playbackRate = playbackRate;
+    const playPromise = video.play();
+    if (playPromise && playPromise.catch) { playPromise.catch(function() {}); }
+
+    const onEnded = function() { cleanupFlight(postId, false); };
+    video.addEventListener('ended', onEnded, { once: true });
+    flightState[postId].onEnded = onEnded;
+
+    const actualPlayMs = (video.duration && isFinite(video.duration) ? (video.duration * 1000 / playbackRate) : targetPlaySeconds * 1000);
+    const t2 = setTimeout(function() {
+      if (flightState[postId]) cleanupFlight(postId, false);
+    }, actualPlayMs + 400);
+    flightState[postId].timers.push(t2);
+  }, flyToCenterDuration);
+  flightState[postId].timers.push(t1);
+}
+
+function cleanupFlight(postId, instant) {
+  const state = flightState[postId];
+  if (!state) return;
+  delete flightState[postId];
+
+  state.timers.forEach(clearTimeout);
+  if (state.onEnded) state.video.removeEventListener('ended', state.onEnded);
+  state.video.pause();
+
+  const overlay = state.overlay;
+  const finish = function() {
+    overlay.remove();
+    state.sourceBtn.classList.remove('flying-source');
+    releaseVideo(state.type, state.video);
+  };
+
+  if (instant) { finish(); return; }
+
+  overlay.style.transition = 'transform ' + returnDuration + 'ms cubic-bezier(.55,0,1,.45), opacity ' + returnDuration + 'ms ease';
+  overlay.style.transform = 'translate(0px, 0px) scale(' + restScale + ') rotate(0deg)';
+  overlay.style.opacity = restOpacity;
+  setTimeout(finish, returnDuration + 30);
+}
+
 function renderReactions(postId, box) {
   box.innerHTML = '';
   Object.keys(EMOJI_MAP).forEach(function(type) {
@@ -913,10 +1090,11 @@ async function toggleReaction(postId, emojiType, box) {
   // 立刻更新画面 / update the screen immediately
   if (already) {
     applySelectedState(box, null);
+    if (flightState[postId]) cleanupFlight(postId, true);
   } else {
     applySelectedState(box, emojiType);
     playPopSound(emojiType);
-    playReactionAnimation(targetBtn, emojiType);
+    playFlyToCenter(postId, emojiType, targetBtn);
   }
 
   // 背景偷偷跟 Firestore 同步，不会挡住画面 / sync to Firestore in the background, without blocking the UI
