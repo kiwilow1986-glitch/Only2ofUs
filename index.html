@@ -981,7 +981,8 @@ function playFlyToCenter(postId, emojiType, sourceBtn) {
   const cardRect = card.getBoundingClientRect();
 
   const postCenterX = cardRect.left + cardRect.width / 2;
-  const postCenterY = cardRect.top + cardRect.height / 2;
+  // 比正中間再往上一點，位置感覺更好 / a bit above dead-center, looks better
+  const postCenterY = cardRect.top + cardRect.height * 0.42;
   const startW = startRect.width;
   const startH = startRect.height;
   const startCenterX = startRect.left + startW / 2;
@@ -1072,6 +1073,93 @@ function cleanupFlight(postId, instant) {
   setTimeout(finish, returnDuration + 30);
 }
 
+// ---- 備用簡化版：先用現有的高清表情圖片，飛到帖子中間、放大、停一下再縮回 ----
+// ---- 等新的透明背景動畫準備好，再換回上面完整的 MASTER 影片版本（playFlyToCenter）----
+// Fallback simple version: uses the existing HD emoji images to fly up,
+// scale up big, hold briefly, then shrink back. Swap the call in
+// toggleReaction() back to playFlyToCenter() once the new
+// transparent-background animations are ready.
+const simpleFlightState = {}; // key: postId -> { overlay, sourceBtn, timers }
+const simpleFlyDuration = 280;
+const simpleReturnDuration = 250;
+const simpleHoldMs = 700;
+const simpleCenterScale = 8;
+const simpleRestScale = 1;
+
+function playFlyToCenterSimple(postId, emojiType, sourceBtn) {
+  const card = sourceBtn.closest('.card');
+  if (!card) return;
+
+  if (simpleFlightState[postId]) {
+    cleanupSimpleFlight(postId, true);
+  }
+
+  const emojiSpan = sourceBtn.querySelector('.emoji');
+  const startRect = emojiSpan.getBoundingClientRect();
+  const cardRect = card.getBoundingClientRect();
+
+  const postCenterX = cardRect.left + cardRect.width / 2;
+  const postCenterY = cardRect.top + cardRect.height * 0.42; // 比正中間再往上一點 / a bit above dead-center
+  const startW = startRect.width;
+  const startH = startRect.height;
+  const startCenterX = startRect.left + startW / 2;
+  const startCenterY = startRect.top + startH / 2;
+  const deltaX = postCenterX - startCenterX;
+  const deltaY = postCenterY - startCenterY;
+
+  sourceBtn.classList.add('flying-source');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'fly-overlay';
+  overlay.style.width = startW + 'px';
+  overlay.style.height = startH + 'px';
+  overlay.style.left = startRect.left + 'px';
+  overlay.style.top = startRect.top + 'px';
+  overlay.style.opacity = '1';
+  overlay.style.transform = 'translate(0px, 0px) scale(' + simpleRestScale + ') rotate(0deg)';
+  overlay.innerHTML = '<img src="' + EMOJI_MAP[emojiType] + '" alt="" style="width:100%;height:100%;object-fit:contain;display:block;">';
+  document.body.appendChild(overlay);
+
+  const flight = { overlay: overlay, sourceBtn: sourceBtn, timers: [] };
+  simpleFlightState[postId] = flight;
+
+  overlay.style.transition = 'transform ' + simpleFlyDuration + 'ms cubic-bezier(.34,1.56,.64,1)';
+  requestAnimationFrame(function() {
+    requestAnimationFrame(function() {
+      overlay.style.transform = 'translate(' + deltaX + 'px, ' + deltaY + 'px) scale(' + simpleCenterScale + ') rotate(6deg)';
+    });
+  });
+
+  const t1 = setTimeout(function() {
+    overlay.style.transition = 'transform 120ms ease-out';
+    overlay.style.transform = 'translate(' + deltaX + 'px, ' + deltaY + 'px) scale(' + simpleCenterScale + ') rotate(0deg)';
+    const t2 = setTimeout(function() {
+      cleanupSimpleFlight(postId, false);
+    }, simpleHoldMs);
+    flight.timers.push(t2);
+  }, simpleFlyDuration);
+  flight.timers.push(t1);
+}
+
+function cleanupSimpleFlight(postId, instant) {
+  const state = simpleFlightState[postId];
+  if (!state) return;
+  delete simpleFlightState[postId];
+  state.timers.forEach(clearTimeout);
+
+  const overlay = state.overlay;
+  const finish = function() {
+    overlay.remove();
+    state.sourceBtn.classList.remove('flying-source');
+  };
+  if (instant) { finish(); return; }
+
+  overlay.style.transition = 'transform ' + simpleReturnDuration + 'ms cubic-bezier(.55,0,1,.45), opacity ' + simpleReturnDuration + 'ms ease';
+  overlay.style.transform = 'translate(0px, 0px) scale(' + simpleRestScale + ') rotate(0deg)';
+  overlay.style.opacity = '0.9';
+  setTimeout(finish, simpleReturnDuration + 30);
+}
+
 function renderReactions(postId, box) {
   box.innerHTML = '';
   Object.keys(EMOJI_MAP).forEach(function(type) {
@@ -1146,11 +1234,11 @@ async function toggleReaction(postId, emojiType, box) {
   // 立刻更新画面 / update the screen immediately
   if (already) {
     applySelectedState(box, null);
-    if (flightState[postId]) cleanupFlight(postId, true);
+    if (simpleFlightState[postId]) cleanupSimpleFlight(postId, true);
   } else {
     applySelectedState(box, emojiType);
     playPopSound(emojiType);
-    playFlyToCenter(postId, emojiType, targetBtn);
+    playFlyToCenterSimple(postId, emojiType, targetBtn);
   }
 
   // 背景偷偷跟 Firestore 同步，不会挡住画面 / sync to Firestore in the background, without blocking the UI
