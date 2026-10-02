@@ -1109,14 +1109,27 @@ function playFlyToCenterSimple(postId, emojiType, sourceBtn) {
 
   sourceBtn.classList.add('flying-source');
 
+  // 關鍵：框架一開始就用「放大後」的真實大小來畫圖，一開始只是用 scale
+  // 縮小讓它看起來跟按鈕一樣小——這樣圖片永遠是照大尺寸畫的，不會因為
+  // 「先畫小、再放大」而變糊。中心點對齊按鈕原本的位置，看起來才不會跳動。
+  // Key fix: the box is sized at the FINAL (enlarged) pixel size from the
+  // start; scale is only ever used to shrink it down to button-size
+  // visually. This means the image is always rasterized at its big,
+  // crisp size — it's never "drawn small, then stretched", which is
+  // what was causing the blur. Centered on the button's own center so
+  // it doesn't visually jump.
+  const bigW = startW * simpleCenterScale;
+  const bigH = startH * simpleCenterScale;
+  const startScaleRatio = 1 / simpleCenterScale;
+
   const overlay = document.createElement('div');
   overlay.className = 'fly-overlay';
-  overlay.style.width = startW + 'px';
-  overlay.style.height = startH + 'px';
-  overlay.style.left = startRect.left + 'px';
-  overlay.style.top = startRect.top + 'px';
+  overlay.style.width = bigW + 'px';
+  overlay.style.height = bigH + 'px';
+  overlay.style.left = (startCenterX - bigW / 2) + 'px';
+  overlay.style.top = (startCenterY - bigH / 2) + 'px';
   overlay.style.opacity = '1';
-  overlay.style.transform = 'translate(0px, 0px) scale(' + simpleRestScale + ') rotate(0deg)';
+  overlay.style.transform = 'translate(0px, 0px) scale(' + startScaleRatio + ') rotate(0deg)';
   overlay.innerHTML = '<img src="' + EMOJI_MAP[emojiType] + '" alt="" style="width:100%;height:100%;object-fit:contain;display:block;">';
   document.body.appendChild(overlay);
 
@@ -1126,22 +1139,22 @@ function playFlyToCenterSimple(postId, emojiType, sourceBtn) {
   overlay.style.transition = 'transform ' + simpleFlyDuration + 'ms cubic-bezier(.34,1.56,.64,1)';
   requestAnimationFrame(function() {
     requestAnimationFrame(function() {
-      overlay.style.transform = 'translate(' + deltaX + 'px, ' + deltaY + 'px) scale(' + simpleCenterScale + ') rotate(6deg)';
+      overlay.style.transform = 'translate(' + deltaX + 'px, ' + deltaY + 'px) scale(1.08) rotate(6deg)';
     });
   });
 
   const t1 = setTimeout(function() {
     overlay.style.transition = 'transform 120ms ease-out';
-    overlay.style.transform = 'translate(' + deltaX + 'px, ' + deltaY + 'px) scale(' + simpleCenterScale + ') rotate(0deg)';
+    overlay.style.transform = 'translate(' + deltaX + 'px, ' + deltaY + 'px) scale(1) rotate(0deg)';
     const t2 = setTimeout(function() {
-      cleanupSimpleFlight(postId, false);
+      cleanupSimpleFlight(postId, false, startScaleRatio);
     }, simpleHoldMs);
     flight.timers.push(t2);
   }, simpleFlyDuration);
   flight.timers.push(t1);
 }
 
-function cleanupSimpleFlight(postId, instant) {
+function cleanupSimpleFlight(postId, instant, startScaleRatio) {
   const state = simpleFlightState[postId];
   if (!state) return;
   delete simpleFlightState[postId];
@@ -1154,8 +1167,12 @@ function cleanupSimpleFlight(postId, instant) {
   };
   if (instant) { finish(); return; }
 
+  // 縮回去也是用 scale 縮小（框架還是大尺寸），所以收回去的最後一刻也不會糊
+  // Shrinking back is still just a scale-down of the same big box, so
+  // the final moment of the return trip stays crisp too
+  const ratio = startScaleRatio || 0.125;
   overlay.style.transition = 'transform ' + simpleReturnDuration + 'ms cubic-bezier(.55,0,1,.45), opacity ' + simpleReturnDuration + 'ms ease';
-  overlay.style.transform = 'translate(0px, 0px) scale(' + simpleRestScale + ') rotate(0deg)';
+  overlay.style.transform = 'translate(0px, 0px) scale(' + ratio + ') rotate(0deg)';
   overlay.style.opacity = '0.9';
   setTimeout(finish, simpleReturnDuration + 30);
 }
