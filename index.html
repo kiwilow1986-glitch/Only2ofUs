@@ -307,11 +307,10 @@
     border-radius: 6px;
     overflow: hidden;
   }
-  .fly-overlay video {
+  .fly-overlay canvas {
     width: 100%; height: 100%;
     object-fit: contain;
     display: block;
-    mix-blend-mode: screen;
   }
   .video-pool { position: fixed; left: -9999px; top: -9999px; width: 1px; height: 1px; overflow: hidden; }
   .react-btn.flying-source { opacity: 0.15; }
@@ -878,7 +877,11 @@ async function deleteMediaItem(postId, post, mediaItem) {
 // Prepares all 5 MASTER videos ahead of time. Each type keeps a small
 // pool of reusable <video> elements, so two different posts reacting
 // with the SAME emoji type at the same time don't fight over one
-// shared element.
+// shared element. The <video> itself always stays hidden off-screen —
+// what's actually shown on screen is a <canvas> that redraws every
+// frame with the video's black backdrop made transparent. This works
+// everywhere, unlike CSS mix-blend-mode on a <video>, which some
+// mobile browsers don't apply correctly.
 const videoPoolEl = document.getElementById('videoPool');
 const videoElementsPool = {};
 Object.keys(VIDEO_MAP).forEach(function(type) { videoElementsPool[type] = []; });
@@ -903,22 +906,64 @@ function acquireVideo(type) {
   return createPooledVideo(type); // 不夠用就臨時多建一份 / make an extra one on demand
 }
 function releaseVideo(type, v) {
-  videoPoolEl.appendChild(v);
+  // 影片本來就沒離開過隱藏池，這裡只是標記它「空出來了」可以再借用
+  // The video never left the hidden pool — this just marks it free again
   videoElementsPool[type].push(v);
+}
+
+// 把影片畫面即時畫到 canvas 上，同時把接近黑色的像素變透明——
+// 這就是讓影片自己的黑色背景「消失」、只留下表情本身的關鍵
+// Draws each video frame onto a canvas in real time and makes
+// near-black pixels transparent — this is what makes the video's own
+// black backdrop disappear, leaving only the emoji itself visible
+const CHROMA_BLACK_CUTOFF = 18;  // 亮度低於這個值，完全透明 / below this brightness, fully transparent
+const CHROMA_FADE_RANGE = 34;    // 再往上這一段做漸層透明，邊緣才不會太鋸齒 / soft-edge fade band above the cutoff
+
+function startChromaKey(flight) {
+  const video = flight.video;
+  const canvas = flight.canvas;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const W = canvas.width, H = canvas.height;
+
+  function tick() {
+    if (!flight.active) return;
+    if (video.readyState >= 2 && W > 0 && H > 0) {
+      ctx.drawImage(video, 0, 0, W, H);
+      const frame = ctx.getImageData(0, 0, W, H);
+      const d = frame.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const brightness = (d[i] + d[i + 1] + d[i + 2]) / 3;
+        if (brightness <= CHROMA_BLACK_CUTOFF) {
+          d[i + 3] = 0;
+        } else if (brightness < CHROMA_BLACK_CUTOFF + CHROMA_FADE_RANGE) {
+          d[i + 3] = Math.round((brightness - CHROMA_BLACK_CUTOFF) / CHROMA_FADE_RANGE * 255);
+        }
+      }
+      ctx.putImageData(frame, 0, 0);
+    }
+    flight.rafId = requestAnimationFrame(tick);
+  }
+  flight.active = true;
+  tick();
+}
+function stopChromaKey(flight) {
+  flight.active = false;
+  if (flight.rafId) cancelAnimationFrame(flight.rafId);
 }
 
 // 每篇貼文同時只允許一個表情在飛/播放中，換選別的表情時，前一個會瞬間消失，不會疊在一起
 // Each post allows only one flying/playing emoji at a time — picking a
 // different one makes the previous one disappear instantly instead of
 // overlapping with it
-const flightState = {}; // key: postId -> { overlay, video, type, sourceBtn, timers }
+const flightState = {}; // key: postId -> { overlay, canvas, video, type, sourceBtn, timers, active, rafId }
 const flyToCenterDuration = 280;
 const returnDuration = 250;
-const centerScale = 5;
+const centerScale = 8;
 const centerOpacity = 0.65;
 const restScale = 1;
 const restOpacity = 1;
 const targetPlaySeconds = 3; // 原片 5 秒，加速壓縮成 3 秒播完 / source is 5s, sped up to finish in ~3s
+const CHROMA_CANVAS_MAX_DIM = 220; // canvas 內部解析度上限，保持效能流暢 / internal resolution cap, keeps this fast
 
 function playFlyToCenter(postId, emojiType, sourceBtn) {
   if (!VIDEO_MAP[emojiType]) return;
@@ -946,6 +991,14 @@ function playFlyToCenter(postId, emojiType, sourceBtn) {
 
   sourceBtn.classList.add('flying-source');
 
+  const nativeW = video.videoWidth || 592;
+  const nativeH = video.videoHeight || 576;
+  const canvasScale = Math.min(1, CHROMA_CANVAS_MAX_DIM / Math.max(nativeW, nativeH));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(nativeW * canvasScale));
+  canvas.height = Math.max(1, Math.round(nativeH * canvasScale));
+
   const overlay = document.createElement('div');
   overlay.className = 'fly-overlay';
   overlay.style.width = startW + 'px';
@@ -954,10 +1007,11 @@ function playFlyToCenter(postId, emojiType, sourceBtn) {
   overlay.style.top = startRect.top + 'px';
   overlay.style.opacity = restOpacity;
   overlay.style.transform = 'translate(0px, 0px) scale(' + restScale + ') rotate(0deg)';
-  overlay.appendChild(video);
+  overlay.appendChild(canvas);
   document.body.appendChild(overlay);
 
-  flightState[postId] = { overlay: overlay, sourceBtn: sourceBtn, video: video, type: emojiType, timers: [] };
+  const flight = { overlay: overlay, canvas: canvas, sourceBtn: sourceBtn, video: video, type: emojiType, timers: [], active: false, rafId: null };
+  flightState[postId] = flight;
 
   overlay.style.transition = 'transform ' + flyToCenterDuration + 'ms cubic-bezier(.34,1.56,.64,1), opacity ' + flyToCenterDuration + 'ms ease';
   requestAnimationFrame(function() {
@@ -978,18 +1032,19 @@ function playFlyToCenter(postId, emojiType, sourceBtn) {
     video.playbackRate = playbackRate;
     const playPromise = video.play();
     if (playPromise && playPromise.catch) { playPromise.catch(function() {}); }
+    startChromaKey(flight);
 
     const onEnded = function() { cleanupFlight(postId, false); };
     video.addEventListener('ended', onEnded, { once: true });
-    flightState[postId].onEnded = onEnded;
+    flight.onEnded = onEnded;
 
     const actualPlayMs = (video.duration && isFinite(video.duration) ? (video.duration * 1000 / playbackRate) : targetPlaySeconds * 1000);
     const t2 = setTimeout(function() {
       if (flightState[postId]) cleanupFlight(postId, false);
     }, actualPlayMs + 400);
-    flightState[postId].timers.push(t2);
+    flight.timers.push(t2);
   }, flyToCenterDuration);
-  flightState[postId].timers.push(t1);
+  flight.timers.push(t1);
 }
 
 function cleanupFlight(postId, instant) {
@@ -999,6 +1054,7 @@ function cleanupFlight(postId, instant) {
 
   state.timers.forEach(clearTimeout);
   if (state.onEnded) state.video.removeEventListener('ended', state.onEnded);
+  stopChromaKey(state);
   state.video.pause();
 
   const overlay = state.overlay;
