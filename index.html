@@ -317,7 +317,16 @@
   .react-btn.dimmed { padding: 2px 3px; margin: 0 -2px; }
   .react-btn.dimmed span.emoji { width: 18px; height: 18px; opacity: 0.55; filter: grayscale(35%); }
   .comments-box { border-top: 0.5px solid #3A3540; margin-top: 10px; padding-top: 8px; }
+  .comment-block { margin: 0 0 8px; }
   .comment-line { font-size: 13px; color: #A89A8C; margin: 4px 0; white-space: pre-wrap; }
+  /* 留言下方的 Emoji 反应，尺寸比帖子本身的反应小一圈 */
+  /* Comment-level emoji reactions, a size smaller than the post's own reactions */
+  .comment-reactions-row { display: flex; gap: 2px; margin: 2px 0 0; flex-wrap: wrap; align-items: center; }
+  .comment-reactions-row .react-btn { padding: 2px 5px; }
+  .comment-reactions-row .react-btn span.emoji { width: 16px; height: 16px; }
+  .comment-reactions-row .react-btn.selected span.emoji { width: 22px; height: 22px; }
+  .comment-reactions-row .react-btn.dimmed { padding: 1px 2px; margin: 0 -1px; }
+  .comment-reactions-row .react-btn.dimmed span.emoji { width: 10px; height: 10px; }
   @keyframes comment-pop-in {
     0% { opacity: 0; transform: translateY(10px) scale(0.9); }
     60% { opacity: 1; transform: translateY(-2px) scale(1.03); }
@@ -1358,15 +1367,85 @@ function loadComments(postId, box) {
     box.innerHTML = '';
     snapshot.forEach(function(docSnap) {
       const c = docSnap.data();
+      const wrap = document.createElement('div');
+      wrap.className = 'comment-block';
+
       const line = document.createElement('p');
       line.className = 'comment-line';
       if (newlyAddedIds.indexOf(docSnap.id) !== -1) {
         line.classList.add('comment-new');
       }
       line.textContent = displayName(c.author) + ': ' + c.content;
-      box.appendChild(line);
+      wrap.appendChild(line);
+
+      const reactRow = document.createElement('div');
+      reactRow.className = 'comment-reactions-row';
+      wrap.appendChild(reactRow);
+
+      box.appendChild(wrap);
+      renderCommentReactions(postId, docSnap.id, reactRow);
     });
   });
+}
+
+// ===== 留言 Emoji 反应 / Comment-level emoji reactions =====
+// 跟帖子本身的反应不一样：点了之后不會馬上送出去，而是等 10 秒安靜沒有
+// 再變動，才真正寫進 Firestore（也就是才會真正觸發通知）。這 10 秒內
+// 換選或取消，都會重新倒數或整個取消，不會留下「半途」的那個選擇。
+// Different from the post's own reaction: a comment reaction isn't
+// written to Firestore immediately. It waits for 10 quiet seconds —
+// switching or deselecting within that window restarts or cancels the
+// timer, so only the choice you're still on after 10 seconds actually
+// gets written (and so actually notifies).
+const commentReactionState = {};  // key: postId+':'+commentId -> currently selected emojiType (or null)
+const commentReactionTimers = {}; // same key -> pending setTimeout id
+const COMMENT_NOTIFY_DELAY_MS = 10000;
+
+function renderCommentReactions(postId, commentId, box) {
+  box.innerHTML = '';
+  Object.keys(EMOJI_MAP).forEach(function(type) {
+    const btn = document.createElement('button');
+    btn.className = 'react-btn';
+    btn.dataset.type = type;
+    btn.innerHTML = '<span class="emoji"><img src="' + EMOJI_MAP[type] + '" alt="' + type + '" draggable="false"></span>';
+    btn.onclick = function() { toggleCommentReaction(postId, commentId, type, box); };
+    box.appendChild(btn);
+  });
+
+  const key = postId + ':' + commentId;
+  const reactionRef = doc(db, 'posts', postId, 'comments', commentId, 'commentReactions', currentUser.uid);
+  getDoc(reactionRef).then(function(snap) {
+    const current = snap.exists() ? snap.data().emojiType : null;
+    commentReactionState[key] = current;
+    applySelectedState(box, current);
+  });
+}
+
+function toggleCommentReaction(postId, commentId, emojiType, box) {
+  const key = postId + ':' + commentId;
+  const already = commentReactionState[key] === emojiType;
+  const newState = already ? null : emojiType;
+  commentReactionState[key] = newState;
+  applySelectedState(box, newState);
+  if (!already) playPopSound(emojiType);
+
+  // 不管這次是選、換選還是取消，都先把上一次排好的「送出」取消
+  // Whatever just happened, first clear any write already queued from a
+  // previous click on this comment
+  if (commentReactionTimers[key]) {
+    clearTimeout(commentReactionTimers[key]);
+    delete commentReactionTimers[key];
+  }
+
+  const reactionRef = doc(db, 'posts', postId, 'comments', commentId, 'commentReactions', currentUser.uid);
+  commentReactionTimers[key] = setTimeout(function() {
+    delete commentReactionTimers[key];
+    if (newState) {
+      setDoc(reactionRef, { emojiType: newState, author: currentUser.email }).catch(function() {});
+    } else {
+      deleteDoc(reactionRef).catch(function() {});
+    }
+  }, COMMENT_NOTIFY_DELAY_MS);
 }
 
 // 送出留言时的小音效 / A short sound for sending a comment
