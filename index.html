@@ -1255,6 +1255,7 @@ async function toggleReaction(postId, emojiType, box) {
   } else {
     applySelectedState(box, emojiType);
     playPopSound(emojiType);
+    playReactionAnimation(targetBtn, emojiType); // 原本的小跳動 + 半透明閃爍效果 / original small bounce + translucent flicker
     playFlyToCenterSimple(postId, emojiType, targetBtn);
   }
 
