@@ -392,8 +392,58 @@
   .tap-enter-screen p { font-size: 14px; animation: tap-pulse 1.6s ease-in-out infinite; }
   @keyframes tap-pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
 
-  .title-banner { text-align: center; padding: 20px 12px 6px; }
-  .title-banner img { max-width: 92%; height: auto; filter: drop-shadow(0 4px 10px rgba(0,0,0,0.5)); }
+  /* ===== 开场影片 / Opening intro video =====
+     影片固定在画面最上方当背景：先播放一次开场，播完停在最后一格，
+     那两行字就留在原位。帖子从字的下方 2mm 开始。
+     The video stays pinned to the top as the background: it plays once
+     as the opening, then rests on its last frame so the two title lines
+     stay exactly where they landed. Posts begin 2mm below the title. */
+  :root {
+    --stage-w: min(100vw, 480px);
+    /* 影片比例 1080x1678；标题底部在影片高度的 33.7% 位置 */
+    /* video is 1080x1678; the title's bottom edge sits at 33.7% of its height */
+    --title-h: calc(var(--stage-w) * 1.5537 * 0.337);
+    --safe-top: env(safe-area-inset-top, 0px);
+  }
+  .intro-stage {
+    position: fixed; inset: 0; z-index: 1; display: none;
+    background: #14131A; overflow: hidden;
+  }
+  .intro-stage.active { display: block; }
+  .intro-backdrop {
+    position: absolute; inset: -30px;
+    background: url("INTRO_END.jpg") center bottom / cover no-repeat;
+    filter: blur(18px) brightness(0.55);
+  }
+  .intro-frame {
+    position: absolute; top: var(--safe-top); left: 0; right: 0;
+    margin: 0 auto; width: var(--stage-w);
+  }
+  .intro-frame video, .intro-frame img {
+    display: block; width: 100%; height: auto; aspect-ratio: 1080 / 1678;
+  }
+  .intro-frame img { position: absolute; top: 0; left: 0; display: none; }
+  .container.below-title {
+    position: fixed; z-index: 2;
+    left: 0; right: 0; margin: 0 auto;
+    width: var(--stage-w);
+    top: calc(var(--safe-top) + var(--title-h) + 2mm);
+    bottom: 0;
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
+    padding-top: 0;
+    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+    opacity: 0; transition: opacity 0.9s ease;
+  }
+  .container.below-title.shown { opacity: 1; }
+  .post-date { font-size: 11px; color: #8C8296; margin-top: 1px; }
+  .save-toast {
+    position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+    z-index: 2000; max-width: 88vw;
+    background: #221F29; color: #E8E3D8; border: 0.5px solid #3A3540;
+    border-radius: 14px; padding: 12px 16px; font-size: 13px; line-height: 1.5;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.5); text-align: center;
+  }
+  .save-toast a { color: #B8935F; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -421,11 +471,17 @@
 <!-- 預先載入的 5 個表情動畫影片，平常藏在畫面外 / preloaded master animation videos, hidden off-screen until used -->
 <div class="video-pool" id="videoPool"></div>
 
-<div class="container" id="mainContent" style="display:none;">
-
-  <div class="title-banner">
-    <img src="title-banner.png" alt="属于我们两人的空间">
+<!-- 开场影片：播完后停在最后一格，当作整个网站的背景 -->
+<!-- Opening video: rests on its last frame afterwards and serves as the site background -->
+<div class="intro-stage" id="introStage">
+  <div class="intro-backdrop"></div>
+  <div class="intro-frame">
+    <video id="introVideo" src="INTRO.mp4" muted playsinline preload="auto"></video>
+    <img id="introFallback" src="INTRO_END.jpg" alt="属于我们两人的空间">
   </div>
+</div>
+
+<div class="container below-title" id="mainContent" style="display:none;">
 
   <div class="card">
     <textarea id="postContent" rows="3" placeholder="写下这一刻的心情... / Write what's on your mind..."></textarea>
@@ -580,11 +636,57 @@ document.getElementById('tapEnterScreen').addEventListener('click', function ent
   screen.classList.add('hidden');
   setTimeout(function() { screen.style.display = 'none'; }, 700);
 
-  document.getElementById('mainContent').style.display = 'block';
-
-  // 进入网站后，把背景音乐音量慢慢调低 / gently fade the music down once inside
-  setTimeout(function() { fadeVolume(bgMusic, 0.3, 1200); }, 500);
+  // 先播开场影片，播完才显示帖子 / play the opening first; posts appear once it finishes
+  playIntro(function() {
+    // 开场结束后，把背景音乐音量慢慢调低 / gently fade the music down once the opening is over
+    fadeVolume(bgMusic, 0.3, 1200);
+  });
 });
+
+// ===== 开场影片 / Opening intro =====
+// 原片 10 秒，用 1.25 倍速播放 = 8 秒。播完停在最后一格（两行字固定的位置）。
+// The source is 10s; played at 1.25x it runs 8s, then rests on its last
+// frame — the exact spot where the two title lines settle.
+const INTRO_PLAYBACK_RATE = 1.25;
+
+function playIntro(onDone) {
+  const stage = document.getElementById('introStage');
+  const video = document.getElementById('introVideo');
+  const fallback = document.getElementById('introFallback');
+  const main = document.getElementById('mainContent');
+  let finished = false;
+
+  stage.classList.add('active');
+
+  function finish(showFallbackImage) {
+    if (finished) return;
+    finished = true;
+    clearTimeout(safetyTimer);
+    // 影片播不了或卡住时，改用最后一格的图片，画面还是一样
+    // If the video can't play or stalls, show the last-frame image instead — same look
+    if (showFallbackImage) fallback.style.display = 'block';
+    main.style.display = 'block';
+    requestAnimationFrame(function() {
+      requestAnimationFrame(function() { main.classList.add('shown'); });
+    });
+    if (onDone) onDone();
+  }
+
+  video.addEventListener('ended', function() { finish(false); }, { once: true });
+  video.addEventListener('error', function() { finish(true); }, { once: true });
+  video.addEventListener('play', function() { video.playbackRate = INTRO_PLAYBACK_RATE; });
+
+  // 保险：网络太慢时最多等 15 秒，不会一直卡在开场
+  // Safety net: on a slow connection, wait at most 15s rather than hanging on the opening
+  const safetyTimer = setTimeout(function() { finish(true); }, 15000);
+
+  video.defaultPlaybackRate = INTRO_PLAYBACK_RATE;
+  video.playbackRate = INTRO_PLAYBACK_RATE;
+  const playPromise = video.play();
+  if (playPromise && playPromise.catch) {
+    playPromise.catch(function() { finish(true); });
+  }
+}
 
 onAuthStateChanged(auth, function(user) {
   if (user && ALLOWED_USERS.indexOf(user.email) !== -1) {
@@ -697,6 +799,76 @@ function observeVideoForAutoplay(videoEl) {
   if (videoAutoplayObserver) videoAutoplayObserver.observe(videoEl);
 }
 
+// 帖子（也就是照片/影片上传）的日期时间，例如 2026/11/13 16:28
+// The post's (i.e. the photo/video upload's) date and time, e.g. 2026/11/13 16:28
+function formatPostDate(post) {
+  let d = null;
+  if (post.timestamp && typeof post.timestamp.toDate === 'function') {
+    d = post.timestamp.toDate();
+  } else if ((post.media || []).length && post.media[0].path) {
+    // 档案名字开头本来就是上传那一刻的时间 / the file name already begins with the upload moment
+    const ms = parseInt(String(post.media[0].path).replace('media/', ''), 10);
+    if (ms > 0) d = new Date(ms);
+  }
+  if (!d) d = new Date(); // 刚发出、伺服器时间还没回来 / just posted, server time not back yet
+  const pad = function(n) { return (n < 10 ? '0' : '') + n; };
+  return d.getFullYear() + '/' + pad(d.getMonth() + 1) + '/' + pad(d.getDate()) +
+    ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+
+// ===== 下载照片/影片到手机 / Save a photo or video to the phone =====
+function showSaveToast(html, ms) {
+  const old = document.getElementById('saveToast');
+  if (old) old.remove();
+  const t = document.createElement('div');
+  t.id = 'saveToast';
+  t.className = 'save-toast';
+  t.innerHTML = html;
+  document.body.appendChild(t);
+  setTimeout(function() { if (t.parentNode) t.remove(); }, ms || 3000);
+  return t;
+}
+
+async function downloadMediaItem(m) {
+  const ext = (String(m.path || '').split('.').pop() || (m.type === 'Video' ? 'mp4' : 'jpg')).toLowerCase();
+  const fileName = 'LOWandFUM_' + String(m.path || Date.now()).replace('media/', '').split('.')[0] + '.' + ext;
+  showSaveToast('下载中… / Downloading…', 60000);
+  try {
+    const resp = await fetch(m.url);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const blob = await resp.blob();
+    const file = new File([blob], fileName, { type: blob.type || (m.type === 'Video' ? 'video/mp4' : 'image/jpeg') });
+
+    // 手机：跳出系统的分享/储存选单，可以直接「储存影像/储存影片」到相簿
+    // Phones: opens the system share sheet, where "Save Image / Save Video" puts it in Photos
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file] });
+        showSaveToast('完成 / Done', 1500);
+        return;
+      } catch (shareErr) {
+        if (shareErr && shareErr.name === 'AbortError') { showSaveToast('已取消 / Cancelled', 1500); return; }
+        // 其他情况就改用下面的一般下载 / otherwise fall through to a normal download
+      }
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function() { URL.revokeObjectURL(a.href); }, 60000);
+    showSaveToast('已下载 / Downloaded', 2000);
+  } catch (err) {
+    // 直接抓档案被挡的时候，给一个连结：点开后长按照片/影片就能储存
+    // If fetching the file directly is blocked, offer a link instead:
+    // open it, then long-press the photo/video to save
+    showSaveToast(
+      '<a href="' + m.url + '" target="_blank" rel="noopener">打开原档 / Open original</a><br>' +
+      '打开后长按照片或影片 → 储存<br>Then long-press it → Save', 12000);
+  }
+}
+
 function buildPostCard(postId, post) {
   const card = document.createElement('div');
   card.className = 'card';
@@ -707,7 +879,8 @@ function buildPostCard(postId, post) {
     '<div class="post-header-row">' +
       '<div class="post-author">' +
         '<div class="avatar">' + initial + '</div>' +
-        '<div><strong style="font-size:13px;">' + authorName + '</strong></div>' +
+        '<div><strong style="font-size:13px;">' + authorName + '</strong>' +
+          '<div class="post-date">' + formatPostDate(post) + '</div></div>' +
       '</div>' +
       '<button class="post-menu-btn" id="postMenuBtn-' + postId + '">⋯</button>' +
     '</div>' +
@@ -758,6 +931,7 @@ function buildPostCard(postId, post) {
     menuBtn.onclick = function(e) {
       e.stopPropagation();
       showDropdownMenu(menuBtn, [
+        { label: '⬇️ 下载 / Download', onClick: function() { downloadMediaItem(m); } },
         { label: '🗑 删除照片/影片 / Delete photo', onClick: function() { deleteMediaItem(postId, post, m); } }
       ]);
     };
