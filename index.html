@@ -408,9 +408,19 @@
   .intro-stage {
     position: fixed; inset: 0; z-index: 1; display: none;
     background: #14131A; overflow: hidden;
+    /* 纯装饰背景，不接受任何点击，点到也不会有反应 / purely decorative — never receives taps */
+    pointer-events: none;
+    transition: opacity 0.5s ease, visibility 0.5s;
   }
   .intro-stage.active { display: block; }
+  /* 开始看post后（scroll下去），整个背景收起来 / once you scroll into the posts, the whole backdrop folds away */
+  body.compact .intro-stage { opacity: 0; visibility: hidden; }
   .intro-backdrop {
+    /* 影片播放中，下方延伸区先调暗；影片定格后才亮起来无缝衔接
+       While the video is playing, the extended area below stays dimmed;
+       it brightens to blend seamlessly once the video settles */
+    transition: filter 0.9s ease;
+    filter: brightness(0.5) saturate(0.95);
     /* 影片下方用「花海往下延伸」的图片补满整个屏幕，宽度和影片完全对齐，
        所以影片的最后一格会和这张图无缝接在一起，看起来就是全屏背景。
        Below the video, this extended-meadow image fills the rest of the
@@ -433,18 +443,50 @@
     display: block; width: 100%; height: auto; aspect-ratio: 1080 / 1920;
   }
   .intro-frame img { position: absolute; top: 0; left: 0; display: none; }
+  .intro-stage.settled .intro-backdrop { filter: none; }
+
+  /* 收起模式的小横幅：取影片定格画面里两行字那一段，缩小置中
+     Compact header: the title band cropped from the settled frame, scaled down and centered */
+  :root {
+    --compact-h: calc(var(--stage-w) * 0.3681);
+  }
+  .compact-header {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 2;
+    margin: 0 auto; width: var(--stage-w);
+    padding-top: var(--safe-top);
+    height: calc(var(--safe-top) + var(--compact-h));
+    overflow: hidden;
+    background: #14131A;
+    opacity: 0; visibility: hidden; pointer-events: none;
+    transition: opacity 0.5s ease, visibility 0.5s;
+  }
+  .compact-header .band {
+    width: 100%;
+    height: calc(var(--stage-w) * 0.4907);
+    background-image: url("INTRO_END.jpg");
+    background-size: 100% auto;
+    background-position: 0 calc(var(--stage-w) * -0.1204);
+    background-repeat: no-repeat;
+    transform: scale(0.75); transform-origin: top center;
+  }
+  body.compact .compact-header { opacity: 1; visibility: visible; }
+
   .container.below-title {
     position: fixed; z-index: 2;
     left: 0; right: 0; margin: 0 auto;
     width: var(--stage-w);
     top: calc(var(--safe-top) + var(--title-h) + 2mm);
     bottom: 0;
+    transition: top 0.5s ease;
     overflow-y: auto; -webkit-overflow-scrolling: touch;
     padding-top: 0;
     padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
     opacity: 0; transition: opacity 0.9s ease;
   }
   .container.below-title.shown { opacity: 1; }
+  body.compact .container.below-title {
+    top: calc(var(--safe-top) + var(--compact-h) + 2mm);
+  }
   .post-date { font-size: 11px; color: #8C8296; margin-top: 1px; }
   .save-toast {
     position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
@@ -491,6 +533,9 @@
     <img id="introFallback" src="INTRO_END.jpg" alt="属于我们两人的空间">
   </div>
 </div>
+
+<!-- 收起模式的小标题横幅 / the compact title banner -->
+<div class="compact-header" id="compactHeader"><div class="band"></div></div>
 
 <div class="container below-title" id="mainContent" style="display:none;">
 
@@ -673,6 +718,8 @@ function playIntro(onDone) {
     if (finished) return;
     finished = true;
     clearTimeout(safetyTimer);
+    // 影片定格了：下方延伸区亮起来，无缝接上 / the video has settled — brighten the extension below so it blends in
+    stage.classList.add('settled');
     // 影片播不了或卡住时，改用最后一格的图片，画面还是一样
     // If the video can't play or stalls, show the last-frame image instead — same look
     if (showFallbackImage) fallback.style.display = 'block';
@@ -681,6 +728,19 @@ function playIntro(onDone) {
       requestAnimationFrame(function() { main.classList.add('shown'); });
     });
     if (onDone) onDone();
+
+    // 开始往下看post时，背景整个收起来、标题变成上方小横幅；
+    // scroll回最顶就恢复全屏背景
+    // Scrolling into the posts folds the backdrop away and shrinks the
+    // title into a small banner; scrolling back to the very top brings
+    // the full backdrop back
+    main.addEventListener('scroll', function() {
+      if (main.scrollTop > 40) {
+        document.body.classList.add('compact');
+      } else if (main.scrollTop < 5) {
+        document.body.classList.remove('compact');
+      }
+    }, { passive: true });
   }
 
   video.addEventListener('ended', function() { finish(false); }, { once: true });
@@ -1192,8 +1252,18 @@ function playFlyToCenter(postId, emojiType, sourceBtn) {
   const cardRect = card.getBoundingClientRect();
 
   const postCenterX = cardRect.left + cardRect.width / 2;
-  // 比正中間再往上一點，位置感覺更好 / a bit above dead-center, looks better
-  const postCenterY = cardRect.top + cardRect.height * 0.42;
+  // 用「帖子目前看得到的那一段」的中央，而不是整张卡片的中央——
+  // 卡片一半被滑出画面时，表情才不会跑到标题区或画面外
+  // Center on the VISIBLE part of the card, not the whole card — so when
+  // the card is half scrolled away the emoji never drifts into the
+  // title area or off screen
+  const mainBox = document.getElementById('mainContent');
+  const containerTop = mainBox ? mainBox.getBoundingClientRect().top : 0;
+  const visTop = Math.max(cardRect.top, containerTop);
+  const visBottom = Math.min(cardRect.bottom, window.innerHeight);
+  const postCenterY = (visBottom - visTop > 120)
+    ? (visTop + (visBottom - visTop) * 0.45)
+    : (cardRect.top + cardRect.height * 0.42);
   const startW = startRect.width;
   const startH = startRect.height;
   const startCenterX = startRect.left + startW / 2;
