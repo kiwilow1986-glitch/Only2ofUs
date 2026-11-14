@@ -400,9 +400,9 @@
      stay exactly where they landed. Posts begin 2mm below the title. */
   :root {
     --stage-w: min(100vw, 480px);
-    /* 影片比例 1080x1678；标题底部在影片高度的 33.7% 位置 */
-    /* video is 1080x1678; the title's bottom edge sits at 33.7% of its height */
-    --title-h: calc(var(--stage-w) * 1.5537 * 0.337);
+    /* 新影片 1080x1920；标题底部在 y=640，即 0.5926 个画面宽的位置 */
+    /* the new video is 1080x1920; the title's bottom edge is at y=640, i.e. 0.5926 x the stage width */
+    --title-h: calc(var(--stage-w) * 0.5926);
     --safe-top: env(safe-area-inset-top, 0px);
   }
   .intro-stage {
@@ -424,9 +424,13 @@
   .intro-frame {
     position: absolute; top: var(--safe-top); left: 0; right: 0;
     margin: 0 auto; width: var(--stage-w);
+    /* 影片结尾底部有一条黑边，所以只显示到 y=1740，黑边藏在外面 */
+    /* the video grows a black strip at its bottom near the end, so we
+       only show down to y=1740 and keep the strip clipped away */
+    overflow: hidden; aspect-ratio: 1080 / 1740;
   }
   .intro-frame video, .intro-frame img {
-    display: block; width: 100%; height: auto; aspect-ratio: 1080 / 1678;
+    display: block; width: 100%; height: auto; aspect-ratio: 1080 / 1920;
   }
   .intro-frame img { position: absolute; top: 0; left: 0; display: none; }
   .container.below-title {
@@ -482,6 +486,7 @@
 <div class="intro-stage" id="introStage">
   <div class="intro-backdrop"></div>
   <div class="intro-frame">
+    <!-- 开场影片是 H.264 普通版，所有手机电脑都直接支援 / the intro is plain H.264, supported everywhere -->
     <video id="introVideo" src="INTRO.mp4" muted playsinline preload="auto"></video>
     <img id="introFallback" src="INTRO_END.jpg" alt="属于我们两人的空间">
   </div>
@@ -650,10 +655,10 @@ document.getElementById('tapEnterScreen').addEventListener('click', function ent
 });
 
 // ===== 开场影片 / Opening intro =====
-// 原片 10 秒，用 1.25 倍速播放 = 8 秒。播完停在最后一格（两行字固定的位置）。
-// The source is 10s; played at 1.25x it runs 8s, then rests on its last
-// frame — the exact spot where the two title lines settle.
-const INTRO_PLAYBACK_RATE = 1.25;
+// 影片档案本身已经做成 8 秒，直接原速播放，播完停在最后一格（两行字固定的位置）。
+// The video file itself is already 8s — played at normal speed, then
+// rests on its last frame, where the two title lines settle.
+const INTRO_PLAYBACK_RATE = 1;
 
 function playIntro(onDone) {
   const stage = document.getElementById('introStage');
@@ -680,6 +685,11 @@ function playIntro(onDone) {
 
   video.addEventListener('ended', function() { finish(false); }, { once: true });
   video.addEventListener('error', function() { finish(true); }, { once: true });
+  // 用 <source> 列表时，错误会落在最后一个 source 上 / with a <source> list, failures land on the last source
+  const introSources = video.querySelectorAll('source');
+  if (introSources.length) {
+    introSources[introSources.length - 1].addEventListener('error', function() { finish(true); }, { once: true });
+  }
   video.addEventListener('play', function() { video.playbackRate = INTRO_PLAYBACK_RATE; });
 
   // 保险：网络太慢时最多等 15 秒，不会一直卡在开场
@@ -1114,11 +1124,22 @@ function startChromaKey(flight) {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   const W = canvas.width, H = canvas.height;
 
+  let lastFrameTime = -1;
   function tick() {
     if (!flight.active) return;
-    if (video.readyState >= 2 && W > 0 && H > 0) {
+    // 影片一秒約 30 格，畫面一秒刷新 60 次：同一格不重算兩次 / the video runs ~30fps but the screen refreshes at 60 — don't reprocess the same frame twice
+    if (video.readyState >= 2 && W > 0 && H > 0 && video.currentTime !== lastFrameTime) {
+      lastFrameTime = video.currentTime;
       ctx.drawImage(video, 0, 0, W, H);
-      const frame = ctx.getImageData(0, 0, W, H);
+      // 在本機直接打開 html 檔案（file://）時，瀏覽器會禁止讀取畫面像素，
+      // 黑背景就去不掉——正式網站上沒有這個限制。這裡包一層保護，
+      // 就算被禁止也只是背景變黑，動畫照常跑完
+      // When the html file is opened directly from disk (file://), the
+      // browser forbids reading pixels back, so the black backdrop
+      // can't be removed — the live site has no such limit. Guarded so
+      // the animation still runs either way.
+      let frame;
+      try { frame = ctx.getImageData(0, 0, W, H); } catch (e) { flight.rafId = requestAnimationFrame(tick); return; }
       const d = frame.data;
       for (let i = 0; i < d.length; i += 4) {
         const brightness = (d[i] + d[i + 1] + d[i + 2]) / 3;
@@ -1149,10 +1170,11 @@ const flyToCenterDuration = 280;
 const returnDuration = 250;
 const centerScale = 8;
 const centerOpacity = 0.65;
+const playOpacity = 0.8;   // 播放時半透明，貼文還能隱約看到 / semi-transparent while playing, so the post shows through
 const restScale = 1;
 const restOpacity = 1;
 const targetPlaySeconds = 3; // 原片 5 秒，加速壓縮成 3 秒播完 / source is 5s, sped up to finish in ~3s
-const CHROMA_CANVAS_MAX_DIM = 220; // canvas 內部解析度上限，保持效能流暢 / internal resolution cap, keeps this fast
+const CHROMA_CANVAS_MAX_DIM = 540; // canvas 內部解析度上限：接近原片解析度，放大也清晰 / internal resolution cap: near the source video's own, stays crisp enlarged
 
 function playFlyToCenter(postId, emojiType, sourceBtn) {
   if (!VIDEO_MAP[emojiType]) return;
@@ -1189,32 +1211,43 @@ function playFlyToCenter(postId, emojiType, sourceBtn) {
   canvas.width = Math.max(1, Math.round(nativeW * canvasScale));
   canvas.height = Math.max(1, Math.round(nativeH * canvasScale));
 
+  // 關鍵：外框一開始就用「放大後」的真實大小，先 scale 縮小到按鈕尺寸，
+  // 飛到中間時放大回 1 —— 永遠不是把小畫面硬拉大，所以不會糊
+  // （跟圖片版同一個修法）
+  // Key: the box is created at its FINAL enlarged size and starts
+  // scaled DOWN to button size, growing back to 1 at the center — the
+  // picture is never stretched up past its real size, so it stays
+  // crisp (same fix as the image version)
+  const bigW = startW * centerScale;
+  const bigH = startH * centerScale;
+  const startScaleRatio = 1 / centerScale;
+
   const overlay = document.createElement('div');
   overlay.className = 'fly-overlay';
-  overlay.style.width = startW + 'px';
-  overlay.style.height = startH + 'px';
-  overlay.style.left = startRect.left + 'px';
-  overlay.style.top = startRect.top + 'px';
-  overlay.style.opacity = restOpacity;
-  overlay.style.transform = 'translate(0px, 0px) scale(' + restScale + ') rotate(0deg)';
+  overlay.style.width = bigW + 'px';
+  overlay.style.height = bigH + 'px';
+  overlay.style.left = (startCenterX - bigW / 2) + 'px';
+  overlay.style.top = (startCenterY - bigH / 2) + 'px';
+  overlay.style.opacity = '1';
+  overlay.style.transform = 'translate(0px, 0px) scale(' + startScaleRatio + ') rotate(0deg)';
   overlay.appendChild(canvas);
   document.body.appendChild(overlay);
 
-  const flight = { overlay: overlay, canvas: canvas, sourceBtn: sourceBtn, video: video, type: emojiType, timers: [], active: false, rafId: null };
+  const flight = { overlay: overlay, canvas: canvas, sourceBtn: sourceBtn, video: video, type: emojiType, timers: [], active: false, rafId: null, startScaleRatio: startScaleRatio };
   flightState[postId] = flight;
 
   overlay.style.transition = 'transform ' + flyToCenterDuration + 'ms cubic-bezier(.34,1.56,.64,1), opacity ' + flyToCenterDuration + 'ms ease';
   requestAnimationFrame(function() {
     requestAnimationFrame(function() {
-      overlay.style.transform = 'translate(' + deltaX + 'px, ' + deltaY + 'px) scale(' + centerScale + ') rotate(6deg)';
+      overlay.style.transform = 'translate(' + deltaX + 'px, ' + deltaY + 'px) scale(1.06) rotate(4deg)';
       overlay.style.opacity = centerOpacity;
     });
   });
 
   const t1 = setTimeout(function() {
-    overlay.style.transition = 'transform 120ms ease-out, opacity 120ms ease-out';
-    overlay.style.transform = 'translate(' + deltaX + 'px, ' + deltaY + 'px) scale(' + centerScale + ') rotate(0deg)';
-    overlay.style.opacity = '1';
+    overlay.style.transition = 'transform 120ms ease-out, opacity 200ms ease-out';
+    overlay.style.transform = 'translate(' + deltaX + 'px, ' + deltaY + 'px) scale(1) rotate(0deg)';
+    overlay.style.opacity = playOpacity;
 
     video.currentTime = 0;
     const playbackRate = (video.duration && isFinite(video.duration) && video.duration > 0)
@@ -1256,8 +1289,9 @@ function cleanupFlight(postId, instant) {
 
   if (instant) { finish(); return; }
 
+  const backRatio = state.startScaleRatio || (1 / centerScale);
   overlay.style.transition = 'transform ' + returnDuration + 'ms cubic-bezier(.55,0,1,.45), opacity ' + returnDuration + 'ms ease';
-  overlay.style.transform = 'translate(0px, 0px) scale(' + restScale + ') rotate(0deg)';
+  overlay.style.transform = 'translate(0px, 0px) scale(' + backRatio + ') rotate(0deg)';
   overlay.style.opacity = restOpacity;
   setTimeout(finish, returnDuration + 30);
 }
@@ -1413,21 +1447,11 @@ function playReactionAnimation(btn, emojiType) {
     emojiSpan.removeEventListener('animationend', done);
   });
 
-  // 大动作：整篇帖子盖上一个放大的表情 / the big burst covering the whole post
-  const card = btn.closest('.card');
-  if (card) {
-    const old = card.querySelector('.reaction-burst');
-    if (old) old.remove();
-    const burst = document.createElement('div');
-    burst.className = 'reaction-burst burst-' + emojiType;
-    burst.innerHTML =
-      '<span class="burst-echo"><img src="' + EMOJI_MAP[emojiType] + '" alt=""></span>' +
-      '<span class="burst-main"><img src="' + EMOJI_MAP[emojiType] + '" alt=""></span>';
-    card.appendChild(burst);
-    burst.addEventListener('animationend', function() { burst.remove(); }, { once: true });
-    // 保险：万一动画事件没触发，1.5 秒后强制清掉 / safety net in case the event never fires
-    setTimeout(function() { if (burst.parentNode) burst.remove(); }, 1500);
-  }
+  // 以前這裡還有一個 PNG 圖片掃過貼文的動畫，現在由 MASTER 影片
+  // 飛到中間的效果取代了，所以拿掉，只保留按鈕本身的小跳動
+  // The old PNG sweep across the post is now replaced by the MASTER
+  // video flying to the center, so only the button's own little
+  // bounce remains here
 }
 
 async function toggleReaction(postId, emojiType, box) {
@@ -1440,12 +1464,15 @@ async function toggleReaction(postId, emojiType, box) {
   // 立刻更新画面 / update the screen immediately
   if (already) {
     applySelectedState(box, null);
-    if (simpleFlightState[postId]) cleanupSimpleFlight(postId, true);
+    if (flightState[postId]) cleanupFlight(postId, true);
   } else {
     applySelectedState(box, emojiType);
     playPopSound(emojiType);
-    playReactionAnimation(targetBtn, emojiType); // 原本的小跳動 + 半透明閃爍效果 / original small bounce + translucent flicker
-    playFlyToCenterSimple(postId, emojiType, targetBtn);
+    playReactionAnimation(targetBtn, emojiType); // 按鈕上的小跳動 / the button's little bounce
+    // MASTER 影片從按鈕飛到貼文中間，放大、半透明播 3 秒，再縮回按鈕
+    // The MASTER video flies from the button to the post's center,
+    // enlarged and semi-transparent for ~3s, then shrinks back
+    playFlyToCenter(postId, emojiType, targetBtn);
   }
 
   // 背景偷偷跟 Firestore 同步，不会挡住画面 / sync to Firestore in the background, without blocking the UI
