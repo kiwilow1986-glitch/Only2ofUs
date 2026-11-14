@@ -413,13 +413,28 @@
     transition: opacity 0.5s ease, visibility 0.5s;
   }
   .intro-stage.active { display: block; }
-  /* 开始看post后（scroll下去），整个背景收起来 / once you scroll into the posts, the whole backdrop folds away */
-  body.compact .intro-stage { opacity: 0; visibility: hidden; }
+  /* 开始看post后（scroll下去）：大字影片和定格背景淡出，
+     换成同一个日落场景「没有字」的版本留在post后面
+     Scrolling into the posts: the big-title video and its settled
+     backdrop fade out, replaced by the same sunset scene WITHOUT the
+     title, which stays behind the posts */
+  .intro-frame, .intro-backdrop { transition: opacity 0.6s ease; }
+  body.compact .intro-frame { opacity: 0; }
+  body.compact .intro-backdrop { opacity: 0; }
+  .backdrop-posts {
+    position: absolute; top: var(--safe-top); bottom: 0; left: 0; right: 0;
+    margin: 0 auto; width: var(--stage-w);
+    background: url("BG_POSTS.jpg") top center / 100% auto no-repeat #14131A;
+    /* 稍微调暗一点点，post上的字才清楚 / very slightly dimmed so the posts stay easy to read */
+    filter: brightness(0.9);
+    opacity: 0; transition: opacity 0.6s ease;
+  }
+  body.compact .backdrop-posts { opacity: 1; }
   .intro-backdrop {
     /* 影片播放中，下方延伸区先调暗；影片定格后才亮起来无缝衔接
        While the video is playing, the extended area below stays dimmed;
        it brightens to blend seamlessly once the video settles */
-    transition: filter 0.9s ease;
+    transition: filter 0.9s ease, opacity 0.6s ease;
     filter: brightness(0.5) saturate(0.95);
     /* 影片下方用「花海往下延伸」的图片补满整个屏幕，宽度和影片完全对齐，
        所以影片的最后一格会和这张图无缝接在一起，看起来就是全屏背景。
@@ -526,6 +541,7 @@
 <!-- Opening video: rests on its last frame afterwards and serves as the site background -->
 <div class="intro-stage" id="introStage">
   <div class="intro-backdrop"></div>
+  <div class="backdrop-posts"></div>
   <div class="intro-frame">
     <!-- 开场影片是 H.264 普通版，所有手机电脑都直接支援 / the intro is plain H.264, supported everywhere -->
     <video id="introVideo" src="INTRO.mp4" muted playsinline preload="auto"></video>
