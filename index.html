@@ -488,15 +488,20 @@
   /* 平时显示「字缩小」影片；scroll回顶展开时换成「字放大」影片
      Normally the shrink video shows; while expanding back, the grow video takes over */
   #titleGrowVideo { display: none; }
-  body.expanding #titleGrowVideo { display: block; }
-  body.expanding #titleShrinkVideo { display: none; }
-  body.compact .compact-header, body.expanding .compact-header { opacity: 1; visibility: visible; }
+  body.expanding #titleGrowVideo, body.expanded #titleGrowVideo { display: block; }
+  body.expanding #titleShrinkVideo, body.expanded #titleShrinkVideo { display: none; }
+  body.compact .compact-header, body.expanding .compact-header, body.expanded .compact-header { opacity: 1; visibility: visible; }
   body.compact .compact-header .band { height: var(--compact-h); }
   body.expanding .compact-header .band { transition-duration: 1.1s; }
   /* 展开播放途中，先不显示定格的大字画面，等放大影片播完才淡入接上
      While the grow video plays, the settled big-title frame stays hidden,
      fading back in only once the video finishes */
-  body.expanding .intro-frame { opacity: 0; }
+  /* 放大影片播完就直接定格在它的最后一格（expanded状态），
+     不再切回开场的定格画面——所以不会再有两套字重影
+     After the grow video finishes it simply freezes on its own last
+     frame (the "expanded" state) — we never swap back to the opening's
+     settled frame, so the double-title ghost is gone */
+  body.expanding .intro-frame, body.expanded .intro-frame { opacity: 0; }
 
   .container.below-title {
     position: fixed; z-index: 2;
@@ -783,48 +788,52 @@ function playIntro(onDone) {
       const p = v.play();
       if (p && p.catch) { p.catch(function() {}); }
     }
-    function finishExpand() {
+    function settleExpanded() {
+      // 放大影片播完：停在它自己的最后一格，这就是回顶后的定格画面
+      // Grow video done: freeze on its own last frame — that IS the
+      // resting full view from now on
+      if (expandTimer) { clearTimeout(expandTimer); expandTimer = null; }
+      if (document.body.classList.contains('expanding')) {
+        document.body.classList.remove('expanding');
+        document.body.classList.add('expanded');
+      }
+    }
+    function clearExpandStates() {
       if (expandTimer) { clearTimeout(expandTimer); expandTimer = null; }
       document.body.classList.remove('expanding');
-      if (growVideo) growVideo.pause();
+      document.body.classList.remove('expanded');
     }
     if (growVideo) {
-      growVideo.addEventListener('ended', finishExpand);
-      // 在影片还剩约0.2秒、字还在动的时候就开始淡接——
-      // 画面在动，重影就几乎看不出来
-      // Start the handover ~0.2s before the video ends, while the title
-      // is still moving — motion hides the tiny mismatch between the
-      // grow video's final frame and the settled opening frame
-      growVideo.addEventListener('timeupdate', function() {
-        if (document.body.classList.contains('expanding') &&
-            growVideo.duration && growVideo.currentTime >= growVideo.duration - 0.22) {
-          finishExpand();
-        }
-      });
+      growVideo.addEventListener('ended', settleExpanded);
+      // 万一放大影片坏了播不出来：退回开场的定格画面，至少不卡住
+      // If the grow video somehow fails, fall back to the opening's
+      // settled frame rather than getting stuck
+      growVideo.addEventListener('error', function() { clearExpandStates(); });
     }
 
     main.addEventListener('scroll', function() {
       const body = document.body;
       const isCompact = body.classList.contains('compact');
       const isExpanding = body.classList.contains('expanding');
+      const isExpanded = body.classList.contains('expanded');
       // 灵敏度：手指一动（约6px）就触发收起 / very sensitive — about 6px of scroll triggers the collapse
-      if (!isCompact && !isExpanding && main.scrollTop > 6) {
+      if (!isCompact && main.scrollTop > 6) {
+        // 从全屏（开场定格或放大定格）或展开途中，一滑就收起
+        // From any full view (opening or expanded freeze), or even
+        // mid-expand, a small scroll collapses right away
+        clearExpandStates();
         body.classList.add('compact');
         if (growVideo) growVideo.pause();
         playFrom(shrinkVideo, SHRINK_RATE);
-      } else if (isExpanding && main.scrollTop > 6) {
-        // 展开途中又往下滑：直接切回收起 / scrolled down again mid-expand: collapse again
-        finishExpand();
-        body.classList.add('compact');
-        playFrom(shrinkVideo, SHRINK_RATE);
-      } else if (isCompact && main.scrollTop < 3) {
-        // 回到最顶：播「字放大」影片，播完淡回全屏定格
-        // Back at the very top: play the grow video, then fade back to the settled full view
+      } else if (isCompact && !isExpanding && !isExpanded && main.scrollTop < 3) {
+        // 回到最顶：播「字放大」影片，播完直接定格在影片最后一格
+        // Back at the very top: play the grow video and freeze on its
+        // own final frame
         body.classList.remove('compact');
         body.classList.add('expanding');
         if (shrinkVideo) shrinkVideo.pause();
         playFrom(growVideo, GROW_RATE);
-        expandTimer = setTimeout(finishExpand, 1400);
+        expandTimer = setTimeout(settleExpanded, 1400);
       }
     }, { passive: true });
   }
