@@ -434,10 +434,6 @@
   .intro-frame {
     position: absolute; top: var(--safe-top); left: 0; right: 0;
     margin: 0 auto; width: var(--stage-w);
-    /* 影片结尾底部有一条黑边，所以只显示到 y=1740，黑边藏在外面 */
-    /* the video grows a black strip at its bottom near the end, so we
-       only show down to y=1740 and keep the strip clipped away */
-    overflow: hidden; aspect-ratio: 1080 / 1740;
   }
   .intro-frame video, .intro-frame img {
     display: block; width: 100%; height: auto; aspect-ratio: 1080 / 1920;
@@ -445,31 +441,34 @@
   .intro-frame img { position: absolute; top: 0; left: 0; display: none; }
   .intro-stage.settled .intro-backdrop { filter: none; }
 
-  /* 收起模式的小横幅：取影片定格画面里两行字那一段，缩小置中
-     Compact header: the title band cropped from the settled frame, scaled down and centered */
+  /* 收起时的上方窗口：一边播「字缩小、背景不动」的影片，
+     一边从全屏高度顺滑缩短成一条横幅，最后停在小字那一格
+     The top window while collapsing: it plays the "text shrinks,
+     background stays" video while smoothly shortening from full height
+     down to a slim banner, ending frozen on the small-title frame */
   :root {
-    --compact-h: calc(var(--stage-w) * 0.3681);
+    --compact-h: calc(var(--stage-w) * 0.3519);
   }
   .compact-header {
     position: fixed; top: 0; left: 0; right: 0; z-index: 2;
     margin: 0 auto; width: var(--stage-w);
     padding-top: var(--safe-top);
-    height: calc(var(--safe-top) + var(--compact-h));
-    overflow: hidden;
     background: #14131A;
     opacity: 0; visibility: hidden; pointer-events: none;
-    transition: opacity 0.5s ease, visibility 0.5s;
+    transition: opacity 0.45s ease, visibility 0.45s;
   }
   .compact-header .band {
-    width: 100%;
-    height: calc(var(--stage-w) * 0.4907);
-    background-image: url("INTRO_END.jpg");
-    background-size: 100% auto;
-    background-position: 0 calc(var(--stage-w) * -0.1204);
-    background-repeat: no-repeat;
-    transform: scale(0.75); transform-origin: top center;
+    width: 100%; overflow: hidden;
+    height: calc(var(--stage-w) * 1.7778);
+    transition: height 1.2s cubic-bezier(.4,0,.2,1);
+    /* 影片万一播不了，就显示小字定格图，画面一样 / if the video can't play, the small-title still shows instead — same look */
+    background: url("TITLE_SMALL.jpg") top center / 100% auto no-repeat;
+  }
+  .compact-header .band video {
+    display: block; width: 100%; height: auto;
   }
   body.compact .compact-header { opacity: 1; visibility: visible; }
+  body.compact .compact-header .band { height: var(--compact-h); }
 
   .container.below-title {
     position: fixed; z-index: 2;
@@ -477,7 +476,7 @@
     width: var(--stage-w);
     top: calc(var(--safe-top) + var(--title-h) + 2mm);
     bottom: 0;
-    transition: top 0.5s ease;
+    transition: top 1.2s cubic-bezier(.4,0,.2,1);
     overflow-y: auto; -webkit-overflow-scrolling: touch;
     padding-top: 0;
     padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
@@ -535,7 +534,9 @@
 </div>
 
 <!-- 收起模式的小标题横幅 / the compact title banner -->
-<div class="compact-header" id="compactHeader"><div class="band"></div></div>
+<div class="compact-header" id="compactHeader"><div class="band">
+  <video id="titleShrinkVideo" src="TITLE_SHRINK.mp4" muted playsinline preload="auto"></video>
+</div></div>
 
 <div class="container below-title" id="mainContent" style="display:none;">
 
@@ -734,11 +735,20 @@ function playIntro(onDone) {
     // Scrolling into the posts folds the backdrop away and shrinks the
     // title into a small banner; scrolling back to the very top brings
     // the full backdrop back
+    const shrinkVideo = document.getElementById('titleShrinkVideo');
     main.addEventListener('scroll', function() {
-      if (main.scrollTop > 40) {
+      const isCompact = document.body.classList.contains('compact');
+      if (!isCompact && main.scrollTop > 40) {
         document.body.classList.add('compact');
-      } else if (main.scrollTop < 5) {
+        // 播「字缩小」影片，播完停在小字那一格 / play the shrink video; it ends frozen on the small title
+        if (shrinkVideo) {
+          try { shrinkVideo.currentTime = 0; } catch (e) {}
+          const sp = shrinkVideo.play();
+          if (sp && sp.catch) { sp.catch(function() { shrinkVideo.style.display = 'none'; }); }
+        }
+      } else if (isCompact && main.scrollTop < 5) {
         document.body.classList.remove('compact');
+        if (shrinkVideo) shrinkVideo.pause();
       }
     }, { passive: true });
   }
