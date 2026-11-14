@@ -776,8 +776,11 @@ function playIntro(onDone) {
     // 影片加速：缩字约1.0秒、放大约1.1秒播完，跟画面收合的速度同步
     // Sped-up playback: shrink finishes in ~1.0s, grow in ~1.1s, in sync
     // with the window's own collapse/expand animation
-    const SHRINK_RATE = 1.35;
-    const GROW_RATE = 1.5;
+    // 新的缩字/放大影片来自同一支连续影片，在最小那一格相接
+    // The shrink/grow clips are cut from ONE continuous video and meet
+    // on the exact same smallest-title frame
+    const SHRINK_RATE = 1.25;
+    const GROW_RATE = 1.1;
     let expandTimer = null;
 
     function playFrom(v, rate) {
