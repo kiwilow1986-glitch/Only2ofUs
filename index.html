@@ -411,9 +411,15 @@
   }
   .intro-stage.active { display: block; }
   .intro-backdrop {
-    position: absolute; inset: -30px;
-    background: url("INTRO_END.jpg") center bottom / cover no-repeat;
-    filter: blur(18px) brightness(0.55);
+    /* 影片下方用「花海往下延伸」的图片补满整个屏幕，宽度和影片完全对齐，
+       所以影片的最后一格会和这张图无缝接在一起，看起来就是全屏背景。
+       Below the video, this extended-meadow image fills the rest of the
+       screen. It's exactly as wide as the video, and its top part IS the
+       video's last frame, so the two join seamlessly into one
+       full-screen background. */
+    position: absolute; top: var(--safe-top); bottom: 0; left: 0; right: 0;
+    margin: 0 auto; width: var(--stage-w);
+    background: url("INTRO_BG_FULL.jpg") top center / 100% auto no-repeat #14131A;
   }
   .intro-frame {
     position: absolute; top: var(--safe-top); left: 0; right: 0;
