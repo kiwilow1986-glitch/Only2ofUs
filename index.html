@@ -473,17 +473,29 @@
     transition: opacity 0.45s ease, visibility 0.45s;
   }
   .compact-header .band {
+    position: relative;
     width: 100%; overflow: hidden;
     height: calc(var(--stage-w) * 1.7778);
-    transition: height 1.2s cubic-bezier(.4,0,.2,1);
+    transition: height 1.0s cubic-bezier(.4,0,.2,1);
     /* 影片万一播不了，就显示小字定格图，画面一样 / if the video can't play, the small-title still shows instead — same look */
     background: url("TITLE_SMALL.jpg") top center / 100% auto no-repeat;
   }
   .compact-header .band video {
+    position: absolute; top: 0; left: 0;
     display: block; width: 100%; height: auto;
   }
-  body.compact .compact-header { opacity: 1; visibility: visible; }
+  /* 平时显示「字缩小」影片；scroll回顶展开时换成「字放大」影片
+     Normally the shrink video shows; while expanding back, the grow video takes over */
+  #titleGrowVideo { display: none; }
+  body.expanding #titleGrowVideo { display: block; }
+  body.expanding #titleShrinkVideo { display: none; }
+  body.compact .compact-header, body.expanding .compact-header { opacity: 1; visibility: visible; }
   body.compact .compact-header .band { height: var(--compact-h); }
+  body.expanding .compact-header .band { transition-duration: 1.1s; }
+  /* 展开播放途中，先不显示定格的大字画面，等放大影片播完才淡入接上
+     While the grow video plays, the settled big-title frame stays hidden,
+     fading back in only once the video finishes */
+  body.expanding .intro-frame { opacity: 0; }
 
   .container.below-title {
     position: fixed; z-index: 2;
@@ -491,7 +503,7 @@
     width: var(--stage-w);
     top: calc(var(--safe-top) + var(--title-h) + 2mm);
     bottom: 0;
-    transition: top 1.2s cubic-bezier(.4,0,.2,1);
+    transition: top 1.0s cubic-bezier(.4,0,.2,1);
     overflow-y: auto; -webkit-overflow-scrolling: touch;
     padding-top: 0;
     padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
@@ -501,6 +513,7 @@
   body.compact .container.below-title {
     top: calc(var(--safe-top) + var(--compact-h) + 2mm);
   }
+  body.expanding .container.below-title { transition-duration: 1.1s; }
   .post-date { font-size: 11px; color: #8C8296; margin-top: 1px; }
   .save-toast {
     position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
@@ -552,6 +565,7 @@
 <!-- 收起模式的小标题横幅 / the compact title banner -->
 <div class="compact-header" id="compactHeader"><div class="band">
   <video id="titleShrinkVideo" src="TITLE_SHRINK.mp4" muted playsinline preload="auto"></video>
+  <video id="titleGrowVideo" src="TITLE_GROW.mp4" muted playsinline preload="auto"></video>
 </div></div>
 
 <div class="container below-title" id="mainContent" style="display:none;">
@@ -752,19 +766,51 @@ function playIntro(onDone) {
     // title into a small banner; scrolling back to the very top brings
     // the full backdrop back
     const shrinkVideo = document.getElementById('titleShrinkVideo');
+    const growVideo = document.getElementById('titleGrowVideo');
+    // 影片加速：缩字约1.0秒、放大约1.1秒播完，跟画面收合的速度同步
+    // Sped-up playback: shrink finishes in ~1.0s, grow in ~1.1s, in sync
+    // with the window's own collapse/expand animation
+    const SHRINK_RATE = 1.35;
+    const GROW_RATE = 1.5;
+    let expandTimer = null;
+
+    function playFrom(v, rate) {
+      if (!v) return;
+      try { v.currentTime = 0; } catch (e) {}
+      v.defaultPlaybackRate = rate;
+      v.playbackRate = rate;
+      const p = v.play();
+      if (p && p.catch) { p.catch(function() {}); }
+    }
+    function finishExpand() {
+      if (expandTimer) { clearTimeout(expandTimer); expandTimer = null; }
+      document.body.classList.remove('expanding');
+      if (growVideo) growVideo.pause();
+    }
+    if (growVideo) { growVideo.addEventListener('ended', finishExpand); }
+
     main.addEventListener('scroll', function() {
-      const isCompact = document.body.classList.contains('compact');
-      if (!isCompact && main.scrollTop > 40) {
-        document.body.classList.add('compact');
-        // 播「字缩小」影片，播完停在小字那一格 / play the shrink video; it ends frozen on the small title
-        if (shrinkVideo) {
-          try { shrinkVideo.currentTime = 0; } catch (e) {}
-          const sp = shrinkVideo.play();
-          if (sp && sp.catch) { sp.catch(function() { shrinkVideo.style.display = 'none'; }); }
-        }
-      } else if (isCompact && main.scrollTop < 5) {
-        document.body.classList.remove('compact');
+      const body = document.body;
+      const isCompact = body.classList.contains('compact');
+      const isExpanding = body.classList.contains('expanding');
+      // 灵敏度：手指一动（约6px）就触发收起 / very sensitive — about 6px of scroll triggers the collapse
+      if (!isCompact && !isExpanding && main.scrollTop > 6) {
+        body.classList.add('compact');
+        if (growVideo) growVideo.pause();
+        playFrom(shrinkVideo, SHRINK_RATE);
+      } else if (isExpanding && main.scrollTop > 6) {
+        // 展开途中又往下滑：直接切回收起 / scrolled down again mid-expand: collapse again
+        finishExpand();
+        body.classList.add('compact');
+        playFrom(shrinkVideo, SHRINK_RATE);
+      } else if (isCompact && main.scrollTop < 3) {
+        // 回到最顶：播「字放大」影片，播完淡回全屏定格
+        // Back at the very top: play the grow video, then fade back to the settled full view
+        body.classList.remove('compact');
+        body.classList.add('expanding');
         if (shrinkVideo) shrinkVideo.pause();
+        playFrom(growVideo, GROW_RATE);
+        expandTimer = setTimeout(finishExpand, 1400);
       }
     }, { passive: true });
   }
