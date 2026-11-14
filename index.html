@@ -418,7 +418,8 @@
      Scrolling into the posts: the big-title video and its settled
      backdrop fade out, replaced by the same sunset scene WITHOUT the
      title, which stays behind the posts */
-  .intro-frame, .intro-backdrop { transition: opacity 0.6s ease; }
+  .intro-frame { transition: opacity 0.3s ease; }
+  .intro-backdrop { transition: opacity 0.6s ease; }
   body.compact .intro-frame { opacity: 0; }
   body.compact .intro-backdrop { opacity: 0; }
   .backdrop-posts {
@@ -470,7 +471,7 @@
     padding-top: var(--safe-top);
     background: #14131A;
     opacity: 0; visibility: hidden; pointer-events: none;
-    transition: opacity 0.45s ease, visibility 0.45s;
+    transition: opacity 0.3s ease, visibility 0.3s;
   }
   .compact-header .band {
     position: relative;
@@ -787,7 +788,20 @@ function playIntro(onDone) {
       document.body.classList.remove('expanding');
       if (growVideo) growVideo.pause();
     }
-    if (growVideo) { growVideo.addEventListener('ended', finishExpand); }
+    if (growVideo) {
+      growVideo.addEventListener('ended', finishExpand);
+      // 在影片还剩约0.2秒、字还在动的时候就开始淡接——
+      // 画面在动，重影就几乎看不出来
+      // Start the handover ~0.2s before the video ends, while the title
+      // is still moving — motion hides the tiny mismatch between the
+      // grow video's final frame and the settled opening frame
+      growVideo.addEventListener('timeupdate', function() {
+        if (document.body.classList.contains('expanding') &&
+            growVideo.duration && growVideo.currentTime >= growVideo.duration - 0.22) {
+          finishExpand();
+        }
+      });
+    }
 
     main.addEventListener('scroll', function() {
       const body = document.body;
