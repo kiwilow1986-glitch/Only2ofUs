@@ -861,10 +861,42 @@ function playIntro(onDone) {
     let headerActive = false;
     let lastScrubT = -1;
     let rafPending = false;
+    let scrubPrimed = false;      // iPhone需要先「播一下再暂停」激活影片，否则拖动不显示画面
+    let pendingScrubT = null;     // 影片还没准备好时，先记住要跳去的位置
 
     function stageWpx() { return Math.min(window.innerWidth, 480); }
     function safeTopPx() { return parseFloat(getComputedStyle(header).paddingTop) || 0; }
     function lerp(a, b, t) { return a + (b - a) * t; }
+
+    // iPhone对「从没播放过」的影片不会显示拖动画面——先静音播一下立刻暂停，
+    // 激活解码之后，逐帧拖动才会真的画出来
+    // iOS won't paint seeks on a video that has never played — a quick
+    // muted play-then-pause "primes" the decoder so scrubbing renders
+    function primeScrub() {
+      if (scrubPrimed || !scrubVideo) return;
+      scrubPrimed = true;
+      const pp = scrubVideo.play();
+      if (pp && pp.then) {
+        pp.then(function() {
+          scrubVideo.pause();
+          flushPendingScrub();
+        }).catch(function() { scrubPrimed = false; });
+      }
+    }
+    function setScrub(t) {
+      if (!scrubVideo) return;
+      if (scrubPrimed && scrubVideo.readyState >= 2) {
+        try { scrubVideo.currentTime = t; } catch (e) { pendingScrubT = t; }
+      } else {
+        pendingScrubT = t;
+      }
+    }
+    function flushPendingScrub() {
+      if (pendingScrubT !== null && scrubVideo && scrubVideo.readyState >= 2) {
+        try { scrubVideo.currentTime = pendingScrubT; } catch (e) {}
+        pendingScrubT = null;
+      }
+    }
 
     function activateHeader() {
       if (headerActive) return;
@@ -872,8 +904,9 @@ function playIntro(onDone) {
       // 从此由上方窗口接管标题画面，开场定格层退场
       // The top window takes over from here; the intro's frozen layer bows out
       document.body.classList.add('hdr-active');
+      primeScrub();
       if (scrubVideo && scrubVideo.duration) {
-        try { scrubVideo.currentTime = scrubVideo.duration; } catch (e) {}
+        setScrub(scrubVideo.duration - 0.001);
       }
     }
 
@@ -898,7 +931,7 @@ function playIntro(onDone) {
         const t = pl * scrubVideo.duration;
         if (Math.abs(t - lastScrubT) > 0.016) {
           lastScrubT = t;
-          try { scrubVideo.currentTime = Math.min(t, scrubVideo.duration - 0.001); } catch (e) {}
+          setScrub(Math.min(t, scrubVideo.duration - 0.001));
         }
       }
 
@@ -922,7 +955,8 @@ function playIntro(onDone) {
       growPlaying = false;
       document.body.classList.remove('grow-playing');
       if (growVideo) growVideo.pause();
-      if (scrubVideo) { try { scrubVideo.currentTime = 0; } catch (e) {} lastScrubT = 0; }
+      primeScrub();
+      setScrub(0); lastScrubT = 0;
       // 大字比小字高一点，posts起点顺滑下移 / the big title is taller — the posts ease down
       main.classList.add('ease-top');
       requestAnimationFrame(applyScroll2);
@@ -936,9 +970,14 @@ function playIntro(onDone) {
     }
     if (scrubVideo) {
       scrubVideo.addEventListener('loadedmetadata', function() {
-        if (!firstCycleDone) { try { scrubVideo.currentTime = scrubVideo.duration; } catch (e) {} }
+        if (!firstCycleDone) { setScrub(scrubVideo.duration - 0.001); }
       });
+      scrubVideo.addEventListener('canplay', flushPendingScrub);
     }
+    // 手指一碰就先激活影片（保证在使用者手势里，iPhone一定允许）
+    // Prime on the first touch — inside a user gesture, so iOS always allows it
+    main.addEventListener('touchstart', primeScrub, { once: true, passive: true });
+    main.addEventListener('mousedown', primeScrub, { once: true });
 
     main.addEventListener('scroll', applyScroll2, { passive: true });
     window.addEventListener('resize', applyScroll2);
