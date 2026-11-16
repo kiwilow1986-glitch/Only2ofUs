@@ -139,6 +139,9 @@
   .post-media.multi-media .media-item img,
   .post-media.multi-media .media-item video { width: 100%; height: 100%; object-fit: cover; }
   .reactions-row { display: flex; gap: 4px; margin-top: 10px; flex-wrap: wrap; }
+  /* 已读标记：帖子右下角的小字「XX 看过了 ✓」 / Seen marker: small "XX saw this ✓" at the post's bottom-right */
+  .seen-row { text-align: right; font-size: 11px; color: rgba(184,147,95,0.8); margin-top: 3px; min-height: 0; letter-spacing: 0.3px; }
+  .seen-row:empty { display: none; }
   .react-btn { background: none; border: none; padding: 4px 8px; cursor: pointer; border-radius: 999px; transition: padding 0.25s ease, opacity 0.25s ease, margin 0.25s ease; }
   .react-btn span.emoji { width: 26px; height: 26px; display: inline-block; transition: width 0.25s cubic-bezier(.34,1.56,.64,1), height 0.25s cubic-bezier(.34,1.56,.64,1), opacity 0.25s ease, filter 0.25s ease; }
   .react-btn span.emoji img { width: 100%; height: 100%; object-fit: contain; display: block; pointer-events: none; }
@@ -1137,6 +1140,65 @@ function observeVideoForAutoplay(videoEl) {
   if (videoAutoplayObserver) videoAutoplayObserver.observe(videoEl);
 }
 
+// ===== 已读标记 / Seen markers =====
+// 不是作者的那个人把帖子滑到眼前、停留 1.5 秒，就算「看过了」；
+// 之后这个帖子的右下角（两边手机都）会显示「Ms Fum 看过了 ✓」或「Mr Low 看过了 ✓」。
+// 记录存在 posts/{postId}/seen/{email}，不会触发任何通知。
+// When the NON-author scrolls a post into view and it stays there for
+// 1.5s, it counts as "seen"; the post's bottom-right then shows
+// "Ms Fum 看过了 ✓" / "Mr Low 看过了 ✓" on both phones. Stored at
+// posts/{postId}/seen/{email}; never triggers a notification.
+const seenUnsubs = {};      // postId -> 取消监听的函数 / unsubscribe function
+const seenExists = {};      // postId -> 已经记录过了 / seen doc already exists
+const seenWritten = {};     // postId -> 这个 session 已经写过了 / already attempted this session
+const seenDwellTimers = {}; // postId -> 停留计时器 / dwell timer
+
+function partnerOf(email) { return ALLOWED_USERS.find(function(e) { return e !== email; }); }
+
+function watchSeen(postId, post) {
+  const target = partnerOf(post.author); // 要显示谁的「看过了」 / whose "seen" is shown
+  if (!target) return;
+  if (seenUnsubs[postId]) seenUnsubs[postId]();
+  seenUnsubs[postId] = onSnapshot(doc(db, 'posts', postId, 'seen', target), function(snap) {
+    seenExists[postId] = snap.exists();
+    const el = document.getElementById('seen-' + postId);
+    if (el) el.textContent = snap.exists() ? (displayName(target) + ' 看过了 ✓') : '';
+  }, function() { /* 读取失败不影响其他功能 / a failed read shouldn't break anything else */ });
+}
+
+const postSeenObserver = (typeof IntersectionObserver !== 'undefined')
+  ? new IntersectionObserver(function(entries) {
+      entries.forEach(function(entry) {
+        const postId = entry.target.dataset.seenPostId;
+        if (!postId) return;
+        if (entry.isIntersecting && entry.intersectionRatio >= 0.5) {
+          if (seenDwellTimers[postId]) return;
+          seenDwellTimers[postId] = setTimeout(function() {
+            seenDwellTimers[postId] = null;
+            if (seenExists[postId] || seenWritten[postId] || !currentUser) return; // 已记录过就不再写 / already recorded
+            if (document.visibilityState !== 'visible') return; // app 在后台不算看过 / backgrounded app doesn't count
+            seenWritten[postId] = true; // 一个 session 最多写一次 / at most one write attempt per session
+            setDoc(doc(db, 'posts', postId, 'seen', currentUser.email), {
+              author: currentUser.email,
+              at: serverTimestamp()
+            }, { merge: true }).catch(function() {});
+          }, 1500);
+        } else if (seenDwellTimers[postId]) {
+          clearTimeout(seenDwellTimers[postId]);
+          seenDwellTimers[postId] = null;
+        }
+      });
+    }, { threshold: [0, 0.5, 1] })
+  : null;
+
+function observePostForSeen(card, postId, post) {
+  watchSeen(postId, post);
+  // 只有「不是作者」的人需要被记录 / only the non-author gets recorded
+  if (!postSeenObserver || !currentUser || currentUser.email === post.author) return;
+  card.dataset.seenPostId = postId;
+  postSeenObserver.observe(card);
+}
+
 // 帖子（也就是照片/影片上传）的日期时间，例如 2026/11/13 16:28
 // The post's (i.e. the photo/video upload's) date and time, e.g. 2026/11/13 16:28
 function formatPostDate(post) {
@@ -1225,6 +1287,7 @@ function buildPostCard(postId, post) {
     '<p id="content-' + postId + '" style="font-size:14px; margin:0 0 4px; white-space:pre-wrap;">' + escapeHtml(post.content || '') + '</p>' +
     '<div class="post-media" id="media-' + postId + '"></div>' +
     '<div class="reactions-row" id="react-' + postId + '"></div>' +
+    '<div class="seen-row" id="seen-' + postId + '"></div>' +
     '<div class="comments-box">' +
       '<div id="comments-' + postId + '"></div>' +
       '<div class="comment-input-row">' +
@@ -1280,6 +1343,7 @@ function buildPostCard(postId, post) {
 
   renderReactions(postId, card.querySelector('#react-' + postId));
   loadComments(postId, card.querySelector('#comments-' + postId));
+  observePostForSeen(card, postId, post);
 
   return card;
 }
@@ -1365,6 +1429,12 @@ async function deletePost(postId, post) {
     // 删掉帖子底下的 Emoji 反应 / delete the post's reactions
     const reactionsSnap = await getDocs(collection(db, 'posts', postId, 'reactions'));
     for (const r of reactionsSnap.docs) await deleteDoc(r.ref);
+
+    // 删掉已读记录（就算失败也不挡着删帖子）/ delete the seen markers (never block the post delete)
+    try {
+      const seenSnap = await getDocs(collection(db, 'posts', postId, 'seen'));
+      for (const s of seenSnap.docs) await deleteDoc(s.ref);
+    } catch (seenErr) { /* ignore */ }
 
     // 删掉照片/影片本身 / delete the actual photo/video files
     for (const m of (post.media || [])) {
