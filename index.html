@@ -460,11 +460,9 @@
   .intro-frame img { position: absolute; top: 0; left: 0; display: none; }
   .intro-stage.settled .intro-backdrop { filter: none; }
 
-  /* 收起时的上方窗口：一边播「字缩小、背景不动」的影片，
-     一边从全屏高度顺滑缩短成一条横幅，最后停在小字那一格
-     The top window while collapsing: it plays the "text shrinks,
-     background stays" video while smoothly shortening from full height
-     down to a slim banner, ending frozen on the small-title frame */
+  /* 收起时的上方窗口：逐帧图片跟着scroll进度换，窗口同步缩短成横幅
+     The top window while collapsing: frame images swap with the scroll
+     progress while the window shortens into a slim banner */
   :root {
     --compact-h: calc(var(--stage-w) * 0.361);
   }
@@ -480,18 +478,18 @@
     position: relative;
     width: 100%; overflow: hidden;
     height: calc(var(--stage-w) * 2.1667);
-    /* 影片万一播不了，就显示小字定格图，画面一样 / if the video can't play, the small-title still shows instead — same look */
+    /* 图片条后面垫着小字定格图，保证任何情况都有画面 / the small-title still sits behind the strip so something always shows */
     background: url("TITLE_SMALL.jpg") top center / 100% auto no-repeat;
   }
-  .compact-header .band video {
+  .compact-header .band #titleStrip {
     position: absolute; top: 0; left: 0;
     display: block; width: 100%; height: auto;
+    pointer-events: none;
+    /* 图片条底部渐隐，和底下的背景图自然融合 / the strip fades out at its
+       bottom edge, blending into the backdrop image beneath */
+    -webkit-mask-image: linear-gradient(to bottom, #000 82%, transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 82%, transparent 100%);
   }
-  /* 平时显示「字缩小」影片；scroll回顶展开时换成「字放大」影片
-     Normally the scrub (shrink) video shows; while the one-time grow runs, it takes over */
-  #titleGrowVideo { display: none; }
-  body.grow-playing #titleGrowVideo { display: block; }
-  body.grow-playing #titleShrinkVideo { display: none; }
   body.hdr-active .compact-header { opacity: 1; visibility: visible; }
 
   .container.below-title.ease-top { transition: top 0.4s ease; }
@@ -585,8 +583,10 @@
 
 <!-- 收起模式的小标题横幅 / the compact title banner -->
 <div class="compact-header" id="compactHeader"><div class="band">
-  <video id="titleShrinkVideo" src="TITLE_SHRINK.mp4" muted playsinline preload="auto"></video>
-  <video id="titleGrowVideo" src="TITLE_GROW.mp4" muted playsinline preload="auto"></video>
+  <!-- 标题动画改用逐帧图片：任何手机都100%显示，没有影片播放限制 -->
+  <!-- The title animation uses frame-by-frame images: they render on
+       every phone, with none of video playback's restrictions -->
+  <img id="titleStrip" src="frames/TS_23.webp" alt="" draggable="false">
 </div></div>
 
 <!-- 对方在线时显示的小bar / shown when the other person is online -->
@@ -844,70 +844,81 @@ function playIntro(onDone) {
     // once. After that, the shrink video's progress is tied straight to
     // the scroll position — scroll fast and it moves fast, scroll slow
     // and it moves slow.
-    const scrubVideo = document.getElementById('titleShrinkVideo'); // 全关键帧，可逐帧拖动 / all-intra, scrubs frame by frame
-    const growVideo = document.getElementById('titleGrowVideo');
+    // ===== 标题缩放：逐帧图片，进度完全跟手 =====
+    // TS_00(大字)...TS_23(小字) = 缩字影片的24帧；TG_00(小)...TG_23(大) = 放大影片的24帧
+    // 开场结尾=小字，所以第一次往下scroll只收窗口不换帧；第一次回到最顶，
+    // 播TG帧序列一次(1秒)；之后TS帧 = scroll进度，快慢方向完全跟着手指
+    // ===== Title zoom via image frames, progress tied to the finger =====
+    // TS_00(big)...TS_23(small) = 24 frames of the shrink video;
+    // TG_00(small)...TG_23(big) = 24 frames of the grow video. The intro
+    // ends small, so the first scroll down swaps no frames — only the
+    // window folds. The first return to the very top plays the TG
+    // sequence once (1s); after that the TS frame index IS the scroll
+    // progress — speed and direction follow the finger exactly.
+    const strip = document.getElementById('titleStrip');
     const header = document.getElementById('compactHeader');
     const band = document.querySelector('.compact-header .band');
 
-    const SCRUB_RANGE = 170;      // scroll这么多px，收合/缩放走完全程 / px of scroll for the full transition
-    const SMALL_FRAC = 0.368;     // 小字状态，posts起点 / posts top when the title is small
-    const BIG_FRAC = 0.435;       // 大字状态，posts起点 / posts top when the title is big
-    const COMPACT_FRAC = 0.361;   // 横幅高度 / banner height
-    const BAND_FULL_FRAC = 2.1667;// 全屏时窗口高度（=影片比例）/ full-height window (= the video's ratio)
-    const MM2 = 7.6;              // 2mm
+    const SCRUB_RANGE = 170;
+    const SMALL_FRAC = 0.368;
+    const BIG_FRAC = 0.435;
+    const COMPACT_FRAC = 0.361;
+    const BAND_FULL_FRAC = 2.1667;
+    const MM2 = 7.6;
+    const N_FRAMES = 24;
 
-    let firstCycleDone = false;   // 第一次「字放大」完成了没 / has the first grow run yet
+    let firstCycleDone = false;
     let growPlaying = false;
     let headerActive = false;
-    let lastScrubT = -1;
+    let hasLeftTop = false;   // 真正滑下去过（超过一半）才算离开过顶部 / only counts after really scrolling down past halfway
+    let layoutBig = false;    // posts按大字还是小字排位 / posts positioned for the big or the small title
+    let lastGrowIdx = 0;
+    let lastFrameIdx = -1;
     let rafPending = false;
-    let scrubPrimed = false;      // iPhone需要先「播一下再暂停」激活影片，否则拖动不显示画面
-    let pendingScrubT = null;     // 影片还没准备好时，先记住要跳去的位置
+    let growRaf = null;
+
+    function tsUrl(i) { return 'frames/TS_' + (i < 10 ? '0' : '') + i + '.webp'; }
+    function tgUrl(i) { return 'frames/TG_' + (i < 10 ? '0' : '') + i + '.webp'; }
+    // 开场一结束就预先载入全部48帧（共约2.8MB），之后翻帧零等待
+    // Preload all 48 frames (~2.8MB) right after the intro so frame
+    // swaps are instant
+    const preloadedFrames = [];
+    let tgLoaded = 0;
+    let tgReady = false;
+    for (let i = 0; i < N_FRAMES; i++) {
+      const a = new Image();
+      a.onload = function() {
+        tgLoaded++;
+        if (tgLoaded >= N_FRAMES) {
+          tgReady = true;
+          // 载好时人刚好停在顶部的话，立刻补触发 / if they're already resting at the top, fire now
+          applyScroll2();
+        }
+      };
+      a.src = tgUrl(i);
+      preloadedFrames.push(a);
+    }
+    for (let i = 0; i < N_FRAMES; i++) { const b = new Image(); b.src = tsUrl(i); preloadedFrames.push(b); }
 
     function stageWpx() { return Math.min(window.innerWidth, 480); }
-    function safeTopPx() { return parseFloat(getComputedStyle(header).paddingTop) || 0; }
+    let safeTopCache = -1;
+    function safeTopPx() {
+      if (safeTopCache < 0) safeTopCache = parseFloat(getComputedStyle(header).paddingTop) || 0;
+      return safeTopCache;
+    }
+    window.addEventListener('resize', function() { safeTopCache = -1; });
     function lerp(a, b, t) { return a + (b - a) * t; }
-
-    // iPhone对「从没播放过」的影片不会显示拖动画面——先静音播一下立刻暂停，
-    // 激活解码之后，逐帧拖动才会真的画出来
-    // iOS won't paint seeks on a video that has never played — a quick
-    // muted play-then-pause "primes" the decoder so scrubbing renders
-    function primeScrub() {
-      if (scrubPrimed || !scrubVideo) return;
-      scrubPrimed = true;
-      const pp = scrubVideo.play();
-      if (pp && pp.then) {
-        pp.then(function() {
-          scrubVideo.pause();
-          flushPendingScrub();
-        }).catch(function() { scrubPrimed = false; });
-      }
-    }
-    function setScrub(t) {
-      if (!scrubVideo) return;
-      if (scrubPrimed && scrubVideo.readyState >= 2) {
-        try { scrubVideo.currentTime = t; } catch (e) { pendingScrubT = t; }
-      } else {
-        pendingScrubT = t;
-      }
-    }
-    function flushPendingScrub() {
-      if (pendingScrubT !== null && scrubVideo && scrubVideo.readyState >= 2) {
-        try { scrubVideo.currentTime = pendingScrubT; } catch (e) {}
-        pendingScrubT = null;
-      }
-    }
 
     function activateHeader() {
       if (headerActive) return;
       headerActive = true;
-      // 从此由上方窗口接管标题画面，开场定格层退场
-      // The top window takes over from here; the intro's frozen layer bows out
       document.body.classList.add('hdr-active');
-      primeScrub();
-      if (scrubVideo && scrubVideo.duration) {
-        setScrub(scrubVideo.duration - 0.001);
-      }
+    }
+
+    function setFrame(url, idx) {
+      if (idx === lastFrameIdx) return;
+      lastFrameIdx = idx;
+      strip.src = url;
     }
 
     function applyScroll() {
@@ -915,71 +926,82 @@ function playIntro(onDone) {
       const pl = Math.min(1, Math.max(0, main.scrollTop / SCRUB_RANGE));
       if (pl > 0 && !headerActive) activateHeader();
 
+      // 真的滑下去过一半，才算「离开过顶部」——避免手指刚碰到的第一下
+      // (scrollTop=1~2) 就被误判成「回到顶部」而触发放大
+      // Only counts as having left the top after scrolling past halfway —
+      // so the very first touch (scrollTop=1-2) can't be mistaken for a
+      // "return to the top" and trigger the grow by accident
+      if (pl >= 0.5) hasLeftTop = true;
+
       const W = stageWpx();
-      // 窗口高度与posts起点都按进度插值，跟手 / window height and posts top interpolate with progress
       band.style.height = lerp(BAND_FULL_FRAC, COMPACT_FRAC, pl) * W + 'px';
-      const fullFrac = firstCycleDone ? BIG_FRAC : SMALL_FRAC;
+      const fullFrac = layoutBig ? BIG_FRAC : SMALL_FRAC;
       main.style.top = (safeTopPx() + lerp(fullFrac, COMPACT_FRAC, pl) * W + MM2) + 'px';
 
-      // 背景切换：过半就换成「无字日落背景」 / past halfway, swap to the title-less sunset backdrop
       if (pl > 0.5) document.body.classList.add('compact');
       else document.body.classList.remove('compact');
 
-      // 字的大小跟进度走（第一次放大完成后才启用拖动）
-      // Title size follows progress (scrubbing starts after the first grow)
-      if (firstCycleDone && !growPlaying && scrubVideo && scrubVideo.duration) {
-        const t = pl * scrubVideo.duration;
-        if (Math.abs(t - lastScrubT) > 0.016) {
-          lastScrubT = t;
-          setScrub(Math.min(t, scrubVideo.duration - 0.001));
-        }
+      // 展开动画途中又往下滑：立刻结束动画、交回给手指
+      // Scrolled down mid-grow: end the animation and hand control back to the finger
+      if (growPlaying && main.scrollTop > 6) finishFirstGrow(true);
+
+      // 字的大小 = scroll进度（第一次放大完成后启用）
+      // Title size = scroll progress (active once the first grow has run)
+      if (firstCycleDone && !growPlaying) {
+        const idx = Math.round(pl * (N_FRAMES - 1));
+        setFrame(tsUrl(idx), idx);
       }
 
-      // 第一次回到最顶：正式启动「字放大」影片
-      // First arrival back at the very top: the grow video officially runs
-      if (!firstCycleDone && headerActive && !growPlaying && main.scrollTop < 3) {
+      // 第一次回到最顶：播一次「字放大」帧序列（1秒）。
+      // 条件：真的下去过（hasLeftTop）而且24张放大帧全部载好（tgReady）
+      // First arrival back at the very top: play the grow sequence once (1s).
+      // Requires having really scrolled down first AND all 24 grow frames loaded
+      if (!firstCycleDone && hasLeftTop && tgReady && !growPlaying && main.scrollTop < 3) {
         growPlaying = true;
-        document.body.classList.add('grow-playing');
-        try { growVideo.currentTime = 0; } catch (e) {}
-        const gp = growVideo.play();
-        if (gp && gp.catch) { gp.catch(function() { finishFirstGrow(); }); }
-        // 保险：影片卡住也最多等2.5秒，不会永远不启动跟手拖动
-        // Safety net: even if the video stalls, move on after 2.5s at most
-        setTimeout(finishFirstGrow, 2500);
+        // posts同步让位给变大的字 / the posts make room for the growing title in parallel
+        layoutBig = true;
+        main.classList.add('ease-top');
+        requestAnimationFrame(applyScroll2);
+        const t0 = performance.now();
+        const DUR = 1000;
+        const step = function(now) {
+          if (!growPlaying) return;
+          const q = Math.min(1, (now - t0) / DUR);
+          lastGrowIdx = Math.round(q * (N_FRAMES - 1));
+          setFrame(tgUrl(lastGrowIdx), 100 + lastGrowIdx);
+          if (q < 1) { growRaf = requestAnimationFrame(step); }
+          else { finishFirstGrow(false); }
+        };
+        growRaf = requestAnimationFrame(step);
       }
     }
 
-    function finishFirstGrow() {
+    function finishFirstGrow(interrupted) {
       if (firstCycleDone) return;
       firstCycleDone = true;
       growPlaying = false;
-      document.body.classList.remove('grow-playing');
-      if (growVideo) growVideo.pause();
-      primeScrub();
-      setScrub(0); lastScrubT = 0;
-      // 大字比小字高一点，posts起点顺滑下移 / the big title is taller — the posts ease down
-      main.classList.add('ease-top');
+      layoutBig = true;
+      if (growRaf) { cancelAnimationFrame(growRaf); growRaf = null; }
+      if (interrupted) {
+        // 被打断：换到跟当前大小最接近的缩字帧，不突然跳图，手指马上接管
+        // Interrupted: switch to the shrink frame closest to the current
+        // size — no sudden jump — and the finger takes over right away
+        main.classList.remove('ease-top');
+        const eq = (N_FRAMES - 1) - lastGrowIdx;
+        setFrame(tsUrl(eq), eq);
+      } else {
+        setFrame(tsUrl(0), 0);
+        setTimeout(function() { main.classList.remove('ease-top'); }, 450);
+      }
       requestAnimationFrame(applyScroll2);
-      setTimeout(function() { main.classList.remove('ease-top'); }, 450);
     }
     function applyScroll2() { if (!rafPending) { rafPending = true; requestAnimationFrame(applyScroll); } }
 
-    if (growVideo) {
-      growVideo.addEventListener('ended', finishFirstGrow);
-      growVideo.addEventListener('error', function() { finishFirstGrow(); });
-    }
-    if (scrubVideo) {
-      scrubVideo.addEventListener('loadedmetadata', function() {
-        if (!firstCycleDone) { setScrub(scrubVideo.duration - 0.001); }
-      });
-      scrubVideo.addEventListener('canplay', flushPendingScrub);
-    }
-    // 手指一碰就先激活影片（保证在使用者手势里，iPhone一定允许）
-    // Prime on the first touch — inside a user gesture, so iOS always allows it
-    main.addEventListener('touchstart', primeScrub, { once: true, passive: true });
-    main.addEventListener('mousedown', primeScrub, { once: true });
-
-    main.addEventListener('scroll', applyScroll2, { passive: true });
+    main.addEventListener('scroll', function() {
+      // 手指一动就取消posts的缓动，位置始终跟手 / any real scroll cancels the easing so position always tracks the finger
+      if (!growPlaying) main.classList.remove('ease-top');
+      applyScroll2();
+    }, { passive: true });
     window.addEventListener('resize', applyScroll2);
   }
 
