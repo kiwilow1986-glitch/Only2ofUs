@@ -480,7 +480,7 @@
     position: relative;
     width: 100%; overflow: hidden;
     height: calc(var(--stage-w) * 2.1667);
-    transition: height 1.1s cubic-bezier(.4,0,.2,1);
+    transition: height 1.0s cubic-bezier(.4,0,.2,1);
     /* 影片万一播不了，就显示小字定格图，画面一样 / if the video can't play, the small-title still shows instead — same look */
     background: url("TITLE_SMALL.jpg") top center / 100% auto no-repeat;
   }
@@ -495,7 +495,7 @@
   body.expanding #titleShrinkVideo, body.expanded #titleShrinkVideo { display: none; }
   body.compact .compact-header, body.expanding .compact-header, body.expanded .compact-header { opacity: 1; visibility: visible; }
   body.compact .compact-header .band { height: var(--compact-h); }
-  body.expanding .compact-header .band { transition-duration: 1.1s; }
+  body.expanding .compact-header .band { transition-duration: 1.0s; }
   /* 展开播放途中，先不显示定格的大字画面，等放大影片播完才淡入接上
      While the grow video plays, the settled big-title frame stays hidden,
      fading back in only once the video finishes */
@@ -512,7 +512,7 @@
     width: var(--stage-w);
     top: calc(var(--safe-top) + var(--title-h) + 2mm);
     bottom: 0;
-    transition: top 1.1s cubic-bezier(.4,0,.2,1);
+    transition: top 1.0s cubic-bezier(.4,0,.2,1);
     overflow-y: auto; -webkit-overflow-scrolling: touch;
     padding-top: 0;
     padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
@@ -522,7 +522,7 @@
   body.compact .container.below-title {
     top: calc(var(--safe-top) + var(--compact-h) + 2mm);
   }
-  body.expanding .container.below-title { transition-duration: 1.1s; }
+  body.expanding .container.below-title { transition-duration: 1.0s; }
   .post-date { font-size: 11px; color: #8C8296; margin-top: 1px; }
   /* 对方在线时左下角的小bar / tiny bottom-left bar when the other person is online */
   .online-bar {
@@ -849,8 +849,9 @@ function playIntro(onDone) {
     // 新的缩字/放大影片来自同一支连续影片，在最小那一格相接
     // The shrink/grow clips are cut from ONE continuous video and meet
     // on the exact same smallest-title frame
-    const SHRINK_RATE = 1.9;  // 2.1秒的缩字段 → 约1.1秒播完 / 2.1s shrink clip -> ~1.1s
-    const GROW_RATE = 1.1;    // 1.2秒的放大段 → 约1.1秒播完 / 1.2s grow clip -> ~1.1s
+    // 两段影片本身就是约1秒，原速播放 / both clips are ~1s already — played at natural speed
+    const SHRINK_RATE = 1;
+    const GROW_RATE = 1;
     let expandTimer = null;
 
     function playFrom(v, rate) {
