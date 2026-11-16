@@ -400,9 +400,9 @@
      stay exactly where they landed. Posts begin 2mm below the title. */
   :root {
     --stage-w: min(100vw, 480px);
-    /* 新影片 1080x1920；标题底部在 y=640，即 0.5926 个画面宽的位置 */
-    /* the new video is 1080x1920; the title's bottom edge is at y=640, i.e. 0.5926 x the stage width */
-    --title-h: calc(var(--stage-w) * 0.5926);
+    /* 新影片 1080x2340（19.5:9，iPhone全屏比例）；标题底部在 y=405 */
+    /* the new video is 1080x2340 (19.5:9, iPhone full-screen); the title's bottom edge is at y=405 */
+    --title-h: calc(var(--stage-w) * 0.375);
     --safe-top: env(safe-area-inset-top, 0px);
   }
   .intro-stage {
@@ -445,14 +445,17 @@
        full-screen background. */
     position: absolute; top: var(--safe-top); bottom: 0; left: 0; right: 0;
     margin: 0 auto; width: var(--stage-w);
-    background: url("INTRO_BG_FULL.jpg") top center / 100% auto no-repeat #14131A;
+    /* 影片比例就是手机全屏比例，不再需要往下补接花海延伸图
+       The video's own ratio IS the phone's full-screen ratio now, so no
+       more extension image stitched on below */
+    background: url("INTRO_END.jpg") top center / 100% auto no-repeat #14131A;
   }
   .intro-frame {
     position: absolute; top: var(--safe-top); left: 0; right: 0;
     margin: 0 auto; width: var(--stage-w);
   }
   .intro-frame video, .intro-frame img {
-    display: block; width: 100%; height: auto; aspect-ratio: 1080 / 1920;
+    display: block; width: 100%; height: auto; aspect-ratio: 1080 / 2340;
   }
   .intro-frame img { position: absolute; top: 0; left: 0; display: none; }
   .intro-stage.settled .intro-backdrop { filter: none; }
@@ -463,7 +466,7 @@
      background stays" video while smoothly shortening from full height
      down to a slim banner, ending frozen on the small-title frame */
   :root {
-    --compact-h: calc(var(--stage-w) * 0.3519);
+    --compact-h: calc(var(--stage-w) * 0.361);
   }
   .compact-header {
     position: fixed; top: 0; left: 0; right: 0; z-index: 2;
@@ -476,8 +479,8 @@
   .compact-header .band {
     position: relative;
     width: 100%; overflow: hidden;
-    height: calc(var(--stage-w) * 1.7778);
-    transition: height 1.0s cubic-bezier(.4,0,.2,1);
+    height: calc(var(--stage-w) * 2.1667);
+    transition: height 1.1s cubic-bezier(.4,0,.2,1);
     /* 影片万一播不了，就显示小字定格图，画面一样 / if the video can't play, the small-title still shows instead — same look */
     background: url("TITLE_SMALL.jpg") top center / 100% auto no-repeat;
   }
@@ -509,7 +512,7 @@
     width: var(--stage-w);
     top: calc(var(--safe-top) + var(--title-h) + 2mm);
     bottom: 0;
-    transition: top 1.0s cubic-bezier(.4,0,.2,1);
+    transition: top 1.1s cubic-bezier(.4,0,.2,1);
     overflow-y: auto; -webkit-overflow-scrolling: touch;
     padding-top: 0;
     padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
@@ -521,6 +524,21 @@
   }
   body.expanding .container.below-title { transition-duration: 1.1s; }
   .post-date { font-size: 11px; color: #8C8296; margin-top: 1px; }
+  /* 对方在线时左下角的小bar / tiny bottom-left bar when the other person is online */
+  .online-bar {
+    position: fixed; left: 14px; bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+    z-index: 1500;
+    display: flex; align-items: center; gap: 6px;
+    background: rgba(34,31,41,0.92); border: 0.5px solid #3A3540;
+    color: #E8E3D8; font-size: 12px;
+    padding: 6px 12px; border-radius: 999px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+    opacity: 0; visibility: hidden; transition: opacity 0.4s ease, visibility 0.4s;
+    pointer-events: none;
+  }
+  .online-bar .dot { width: 8px; height: 8px; border-radius: 50%; background: #5ECC7B; box-shadow: 0 0 6px #5ECC7B; }
+  .online-bar.show { opacity: 1; visibility: visible; }
+
   .save-toast {
     position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
     z-index: 2000; max-width: 88vw;
@@ -574,6 +592,9 @@
   <video id="titleGrowVideo" src="TITLE_GROW.mp4" muted playsinline preload="auto"></video>
 </div></div>
 
+<!-- 对方在线时显示的小bar / shown when the other person is online -->
+<div class="online-bar" id="onlineBar"><span class="dot"></span><span id="onlineText"></span></div>
+
 <div class="container below-title" id="mainContent" style="display:none;">
 
   <div class="card">
@@ -606,7 +627,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
   getFirestore, collection, addDoc, getDocs, doc, deleteDoc, setDoc, getDoc, updateDoc,
-  query, orderBy, serverTimestamp, onSnapshot
+  query, orderBy, serverTimestamp, onSnapshot, where
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import {
   getStorage, ref, uploadBytes, getDownloadURL, deleteObject
@@ -688,6 +709,54 @@ async function setupNotifications() {
   }
 }
 
+// ===== 在线状态 / Online presence =====
+// 自己每25秒报一次「我在线」；对方70秒内有报到就算在线，左下角亮起小bar
+// We report "I'm here" every 25s; if the other person reported within
+// the last 70s they count as online and the little bar lights up
+let presenceTimer = null;
+let presenceWatchTimer = null;
+
+function heartbeatPresence() {
+  if (!currentUser) return;
+  setDoc(doc(db, 'users', currentUser.uid), {
+    email: currentUser.email,
+    lastSeen: serverTimestamp()
+  }, { merge: true }).catch(function() {});
+}
+
+function setupPresence() {
+  heartbeatPresence();
+  if (presenceTimer) clearInterval(presenceTimer);
+  presenceTimer = setInterval(heartbeatPresence, 25000);
+  document.addEventListener('visibilitychange', function() {
+    if (!document.hidden) heartbeatPresence();
+  });
+
+  const otherEmail = ALLOWED_USERS.find(function(e) { return e !== currentUser.email; });
+  if (!otherEmail) return;
+  const bar = document.getElementById('onlineBar');
+  const text = document.getElementById('onlineText');
+  let lastSeenMs = 0;
+  function refreshBar() {
+    const online = lastSeenMs && (Date.now() - lastSeenMs < 70000);
+    if (online) {
+      text.textContent = displayName(otherEmail) + ' 在线 / online';
+      bar.classList.add('show');
+    } else {
+      bar.classList.remove('show');
+    }
+  }
+  onSnapshot(query(collection(db, 'users'), where('email', '==', otherEmail)), function(snap) {
+    snap.forEach(function(d) {
+      const ls = d.data().lastSeen;
+      if (ls && ls.toMillis) lastSeenMs = ls.toMillis();
+    });
+    refreshBar();
+  });
+  if (presenceWatchTimer) clearInterval(presenceWatchTimer);
+  presenceWatchTimer = setInterval(refreshBar, 15000);
+}
+
 // ===== 登入 / Login =====
 document.getElementById('googleLoginBtn').onclick = function() {
   const provider = new GoogleAuthProvider();
@@ -725,6 +794,7 @@ document.getElementById('tapEnterScreen').addEventListener('click', function ent
   // click — not after other async steps finish — or iOS silently denies
   // it without ever showing the prompt
   setupNotifications();
+  setupPresence();
 
   screen.classList.add('hidden');
   setTimeout(function() { screen.style.display = 'none'; }, 700);
@@ -779,8 +849,8 @@ function playIntro(onDone) {
     // 新的缩字/放大影片来自同一支连续影片，在最小那一格相接
     // The shrink/grow clips are cut from ONE continuous video and meet
     // on the exact same smallest-title frame
-    const SHRINK_RATE = 1.25;
-    const GROW_RATE = 1.1;
+    const SHRINK_RATE = 1.9;  // 2.1秒的缩字段 → 约1.1秒播完 / 2.1s shrink clip -> ~1.1s
+    const GROW_RATE = 1.1;    // 1.2秒的放大段 → 约1.1秒播完 / 1.2s grow clip -> ~1.1s
     let expandTimer = null;
 
     function playFrom(v, rate) {
@@ -1328,10 +1398,10 @@ const flyToCenterDuration = 280;
 const returnDuration = 250;
 const centerScale = 8;
 const centerOpacity = 0.65;
-const playOpacity = 0.8;   // 播放時半透明，貼文還能隱約看到 / semi-transparent while playing, so the post shows through
+const playOpacity = 0.75;  // 播放時75%透明度 / plays at 75% opacity
 const restScale = 1;
 const restOpacity = 1;
-const targetPlaySeconds = 3; // 原片 5 秒，加速壓縮成 3 秒播完 / source is 5s, sped up to finish in ~3s
+const targetPlaySeconds = 2.3; // 加速播完，连同飞入和吹散整段约3秒 / sped up so fly-in + play + blow-away totals ~3s
 const CHROMA_CANVAS_MAX_DIM = 540; // canvas 內部解析度上限：接近原片解析度，放大也清晰 / internal resolution cap: near the source video's own, stays crisp enlarged
 
 function playFlyToCenter(postId, emojiType, sourceBtn) {
@@ -1401,7 +1471,7 @@ function playFlyToCenter(postId, emojiType, sourceBtn) {
   overlay.appendChild(canvas);
   document.body.appendChild(overlay);
 
-  const flight = { overlay: overlay, canvas: canvas, sourceBtn: sourceBtn, video: video, type: emojiType, timers: [], active: false, rafId: null, startScaleRatio: startScaleRatio };
+  const flight = { overlay: overlay, canvas: canvas, sourceBtn: sourceBtn, video: video, type: emojiType, timers: [], active: false, rafId: null, startScaleRatio: startScaleRatio, deltaX: deltaX, deltaY: deltaY };
   flightState[postId] = flight;
 
   overlay.style.transition = 'transform ' + flyToCenterDuration + 'ms cubic-bezier(.34,1.56,.64,1), opacity ' + flyToCenterDuration + 'ms ease';
@@ -1457,11 +1527,16 @@ function cleanupFlight(postId, instant) {
 
   if (instant) { finish(); return; }
 
-  const backRatio = state.startScaleRatio || (1 / centerScale);
-  overlay.style.transition = 'transform ' + returnDuration + 'ms cubic-bezier(.55,0,1,.45), opacity ' + returnDuration + 'ms ease';
-  overlay.style.transform = 'translate(0px, 0px) scale(' + backRatio + ') rotate(0deg)';
-  overlay.style.opacity = restOpacity;
-  setTimeout(finish, returnDuration + 30);
+  // 像被风吹走一样：往右上飘、旋转、缩小、淡出，然后消失
+  // Like a gust of wind: drifts up and to the right, spinning, shrinking
+  // and fading, then it's gone
+  const windMs = 450;
+  const dx = (state.deltaX || 0) + 180;
+  const dy = (state.deltaY || 0) - 140;
+  overlay.style.transition = 'transform ' + windMs + 'ms cubic-bezier(.45,.05,.85,.4), opacity ' + windMs + 'ms ease-in';
+  overlay.style.transform = 'translate(' + dx + 'px, ' + dy + 'px) scale(0.45) rotate(32deg)';
+  overlay.style.opacity = '0';
+  setTimeout(finish, windMs + 30);
 }
 
 // ---- 備用簡化版：先用現有的高清表情圖片，飛到帖子中間、放大、停一下再縮回 ----
