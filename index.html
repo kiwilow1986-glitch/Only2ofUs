@@ -402,7 +402,7 @@
     --stage-w: min(100vw, 480px);
     /* 新影片 1080x2340（19.5:9，iPhone全屏比例）；标题底部在 y=405 */
     /* the new video is 1080x2340 (19.5:9, iPhone full-screen); the title's bottom edge is at y=405 */
-    --title-h: calc(var(--stage-w) * 0.375);
+    --title-h: calc(var(--stage-w) * 0.368);
     --safe-top: env(safe-area-inset-top, 0px);
   }
   .intro-stage {
@@ -480,7 +480,6 @@
     position: relative;
     width: 100%; overflow: hidden;
     height: calc(var(--stage-w) * 2.1667);
-    transition: height 1.0s cubic-bezier(.4,0,.2,1);
     /* 影片万一播不了，就显示小字定格图，画面一样 / if the video can't play, the small-title still shows instead — same look */
     background: url("TITLE_SMALL.jpg") top center / 100% auto no-repeat;
   }
@@ -489,22 +488,20 @@
     display: block; width: 100%; height: auto;
   }
   /* 平时显示「字缩小」影片；scroll回顶展开时换成「字放大」影片
-     Normally the shrink video shows; while expanding back, the grow video takes over */
+     Normally the scrub (shrink) video shows; while the one-time grow runs, it takes over */
   #titleGrowVideo { display: none; }
-  body.expanding #titleGrowVideo, body.expanded #titleGrowVideo { display: block; }
-  body.expanding #titleShrinkVideo, body.expanded #titleShrinkVideo { display: none; }
-  body.compact .compact-header, body.expanding .compact-header, body.expanded .compact-header { opacity: 1; visibility: visible; }
-  body.compact .compact-header .band { height: var(--compact-h); }
-  body.expanding .compact-header .band { transition-duration: 1.0s; }
+  body.grow-playing #titleGrowVideo { display: block; }
+  body.grow-playing #titleShrinkVideo { display: none; }
+  body.hdr-active .compact-header { opacity: 1; visibility: visible; }
+
+  .container.below-title.ease-top { transition: top 0.4s ease; }
   /* 展开播放途中，先不显示定格的大字画面，等放大影片播完才淡入接上
      While the grow video plays, the settled big-title frame stays hidden,
      fading back in only once the video finishes */
-  /* 放大影片播完就直接定格在它的最后一格（expanded状态），
-     不再切回开场的定格画面——所以不会再有两套字重影
-     After the grow video finishes it simply freezes on its own last
-     frame (the "expanded" state) — we never swap back to the opening's
-     settled frame, so the double-title ghost is gone */
-  body.expanding .intro-frame, body.expanded .intro-frame { opacity: 0; }
+  /* 窗口一接管，开场定格层就退场，不会出现两套字
+     Once the window takes over, the intro's frozen layer steps aside —
+     never two titles at once */
+  body.hdr-active .intro-frame { opacity: 0; }
 
   .container.below-title {
     position: fixed; z-index: 2;
@@ -512,7 +509,7 @@
     width: var(--stage-w);
     top: calc(var(--safe-top) + var(--title-h) + 2mm);
     bottom: 0;
-    transition: top 1.0s cubic-bezier(.4,0,.2,1);
+
     overflow-y: auto; -webkit-overflow-scrolling: touch;
     padding-top: 0;
     padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
@@ -522,7 +519,7 @@
   body.compact .container.below-title {
     top: calc(var(--safe-top) + var(--compact-h) + 2mm);
   }
-  body.expanding .container.below-title { transition-duration: 1.0s; }
+
   .post-date { font-size: 11px; color: #8C8296; margin-top: 1px; }
   /* 对方在线时左下角的小bar / tiny bottom-left bar when the other person is online */
   .online-bar {
@@ -836,80 +833,115 @@ function playIntro(onDone) {
     });
     if (onDone) onDone();
 
-    // 开始往下看post时，背景整个收起来、标题变成上方小横幅；
-    // scroll回最顶就恢复全屏背景
-    // Scrolling into the posts folds the backdrop away and shrinks the
-    // title into a small banner; scrolling back to the very top brings
-    // the full backdrop back
-    const shrinkVideo = document.getElementById('titleShrinkVideo');
+    // ===== 标题的收起/放大：进度完全跟着手指scroll走 =====
+    // 开场结尾的字已经是「缩小」状态，所以第一次往下scroll不播任何影片，
+    // 只把画面收成横幅；第一次scroll回到最顶时才启动「字放大」影片；
+    // 完成第一次之后，缩放进度直接绑定scroll位置——scroll多快，字就缩放多快
+    // ===== Title collapse/expand driven DIRECTLY by scroll position =====
+    // The intro already ends with the SMALL title, so the first scroll
+    // down plays nothing — it only folds the window into a banner. The
+    // first time you scroll back to the very top, the grow video runs
+    // once. After that, the shrink video's progress is tied straight to
+    // the scroll position — scroll fast and it moves fast, scroll slow
+    // and it moves slow.
+    const scrubVideo = document.getElementById('titleShrinkVideo'); // 全关键帧，可逐帧拖动 / all-intra, scrubs frame by frame
     const growVideo = document.getElementById('titleGrowVideo');
-    // 影片加速：缩字约1.0秒、放大约1.1秒播完，跟画面收合的速度同步
-    // Sped-up playback: shrink finishes in ~1.0s, grow in ~1.1s, in sync
-    // with the window's own collapse/expand animation
-    // 新的缩字/放大影片来自同一支连续影片，在最小那一格相接
-    // The shrink/grow clips are cut from ONE continuous video and meet
-    // on the exact same smallest-title frame
-    // 两段影片本身就是约1秒，原速播放 / both clips are ~1s already — played at natural speed
-    const SHRINK_RATE = 1;
-    const GROW_RATE = 1;
-    let expandTimer = null;
+    const header = document.getElementById('compactHeader');
+    const band = document.querySelector('.compact-header .band');
 
-    function playFrom(v, rate) {
-      if (!v) return;
-      try { v.currentTime = 0; } catch (e) {}
-      v.defaultPlaybackRate = rate;
-      v.playbackRate = rate;
-      const p = v.play();
-      if (p && p.catch) { p.catch(function() {}); }
-    }
-    function settleExpanded() {
-      // 放大影片播完：停在它自己的最后一格，这就是回顶后的定格画面
-      // Grow video done: freeze on its own last frame — that IS the
-      // resting full view from now on
-      if (expandTimer) { clearTimeout(expandTimer); expandTimer = null; }
-      if (document.body.classList.contains('expanding')) {
-        document.body.classList.remove('expanding');
-        document.body.classList.add('expanded');
+    const SCRUB_RANGE = 170;      // scroll这么多px，收合/缩放走完全程 / px of scroll for the full transition
+    const SMALL_FRAC = 0.368;     // 小字状态，posts起点 / posts top when the title is small
+    const BIG_FRAC = 0.435;       // 大字状态，posts起点 / posts top when the title is big
+    const COMPACT_FRAC = 0.361;   // 横幅高度 / banner height
+    const BAND_FULL_FRAC = 2.1667;// 全屏时窗口高度（=影片比例）/ full-height window (= the video's ratio)
+    const MM2 = 7.6;              // 2mm
+
+    let firstCycleDone = false;   // 第一次「字放大」完成了没 / has the first grow run yet
+    let growPlaying = false;
+    let headerActive = false;
+    let lastScrubT = -1;
+    let rafPending = false;
+
+    function stageWpx() { return Math.min(window.innerWidth, 480); }
+    function safeTopPx() { return parseFloat(getComputedStyle(header).paddingTop) || 0; }
+    function lerp(a, b, t) { return a + (b - a) * t; }
+
+    function activateHeader() {
+      if (headerActive) return;
+      headerActive = true;
+      // 从此由上方窗口接管标题画面，开场定格层退场
+      // The top window takes over from here; the intro's frozen layer bows out
+      document.body.classList.add('hdr-active');
+      if (scrubVideo && scrubVideo.duration) {
+        try { scrubVideo.currentTime = scrubVideo.duration; } catch (e) {}
       }
     }
-    function clearExpandStates() {
-      if (expandTimer) { clearTimeout(expandTimer); expandTimer = null; }
-      document.body.classList.remove('expanding');
-      document.body.classList.remove('expanded');
+
+    function applyScroll() {
+      rafPending = false;
+      const pl = Math.min(1, Math.max(0, main.scrollTop / SCRUB_RANGE));
+      if (pl > 0 && !headerActive) activateHeader();
+
+      const W = stageWpx();
+      // 窗口高度与posts起点都按进度插值，跟手 / window height and posts top interpolate with progress
+      band.style.height = lerp(BAND_FULL_FRAC, COMPACT_FRAC, pl) * W + 'px';
+      const fullFrac = firstCycleDone ? BIG_FRAC : SMALL_FRAC;
+      main.style.top = (safeTopPx() + lerp(fullFrac, COMPACT_FRAC, pl) * W + MM2) + 'px';
+
+      // 背景切换：过半就换成「无字日落背景」 / past halfway, swap to the title-less sunset backdrop
+      if (pl > 0.5) document.body.classList.add('compact');
+      else document.body.classList.remove('compact');
+
+      // 字的大小跟进度走（第一次放大完成后才启用拖动）
+      // Title size follows progress (scrubbing starts after the first grow)
+      if (firstCycleDone && !growPlaying && scrubVideo && scrubVideo.duration) {
+        const t = pl * scrubVideo.duration;
+        if (Math.abs(t - lastScrubT) > 0.016) {
+          lastScrubT = t;
+          try { scrubVideo.currentTime = Math.min(t, scrubVideo.duration - 0.001); } catch (e) {}
+        }
+      }
+
+      // 第一次回到最顶：正式启动「字放大」影片
+      // First arrival back at the very top: the grow video officially runs
+      if (!firstCycleDone && headerActive && !growPlaying && main.scrollTop < 3) {
+        growPlaying = true;
+        document.body.classList.add('grow-playing');
+        try { growVideo.currentTime = 0; } catch (e) {}
+        const gp = growVideo.play();
+        if (gp && gp.catch) { gp.catch(function() { finishFirstGrow(); }); }
+        // 保险：影片卡住也最多等2.5秒，不会永远不启动跟手拖动
+        // Safety net: even if the video stalls, move on after 2.5s at most
+        setTimeout(finishFirstGrow, 2500);
+      }
     }
+
+    function finishFirstGrow() {
+      if (firstCycleDone) return;
+      firstCycleDone = true;
+      growPlaying = false;
+      document.body.classList.remove('grow-playing');
+      if (growVideo) growVideo.pause();
+      if (scrubVideo) { try { scrubVideo.currentTime = 0; } catch (e) {} lastScrubT = 0; }
+      // 大字比小字高一点，posts起点顺滑下移 / the big title is taller — the posts ease down
+      main.classList.add('ease-top');
+      requestAnimationFrame(applyScroll2);
+      setTimeout(function() { main.classList.remove('ease-top'); }, 450);
+    }
+    function applyScroll2() { if (!rafPending) { rafPending = true; requestAnimationFrame(applyScroll); } }
+
     if (growVideo) {
-      growVideo.addEventListener('ended', settleExpanded);
-      // 万一放大影片坏了播不出来：退回开场的定格画面，至少不卡住
-      // If the grow video somehow fails, fall back to the opening's
-      // settled frame rather than getting stuck
-      growVideo.addEventListener('error', function() { clearExpandStates(); });
+      growVideo.addEventListener('ended', finishFirstGrow);
+      growVideo.addEventListener('error', function() { finishFirstGrow(); });
+    }
+    if (scrubVideo) {
+      scrubVideo.addEventListener('loadedmetadata', function() {
+        if (!firstCycleDone) { try { scrubVideo.currentTime = scrubVideo.duration; } catch (e) {} }
+      });
     }
 
-    main.addEventListener('scroll', function() {
-      const body = document.body;
-      const isCompact = body.classList.contains('compact');
-      const isExpanding = body.classList.contains('expanding');
-      const isExpanded = body.classList.contains('expanded');
-      // 灵敏度：手指一动（约6px）就触发收起 / very sensitive — about 6px of scroll triggers the collapse
-      if (!isCompact && main.scrollTop > 6) {
-        // 从全屏（开场定格或放大定格）或展开途中，一滑就收起
-        // From any full view (opening or expanded freeze), or even
-        // mid-expand, a small scroll collapses right away
-        clearExpandStates();
-        body.classList.add('compact');
-        if (growVideo) growVideo.pause();
-        playFrom(shrinkVideo, SHRINK_RATE);
-      } else if (isCompact && !isExpanding && !isExpanded && main.scrollTop < 3) {
-        // 回到最顶：播「字放大」影片，播完直接定格在影片最后一格
-        // Back at the very top: play the grow video and freeze on its
-        // own final frame
-        body.classList.remove('compact');
-        body.classList.add('expanding');
-        if (shrinkVideo) shrinkVideo.pause();
-        playFrom(growVideo, GROW_RATE);
-        expandTimer = setTimeout(settleExpanded, 1400);
-      }
-    }, { passive: true });
+    main.addEventListener('scroll', applyScroll2, { passive: true });
+    window.addEventListener('resize', applyScroll2);
   }
 
   video.addEventListener('ended', function() { finish(false); }, { once: true });
@@ -1531,7 +1563,7 @@ function cleanupFlight(postId, instant) {
   // 像被风吹走一样：往右上飘、旋转、缩小、淡出，然后消失
   // Like a gust of wind: drifts up and to the right, spinning, shrinking
   // and fading, then it's gone
-  const windMs = 450;
+  const windMs = 420; // 280ms飞入 + 2300ms播放 + 420ms吹散 = 整整3秒 / exactly 3s total
   const dx = (state.deltaX || 0) + 180;
   const dy = (state.deltaY || 0) - 140;
   overlay.style.transition = 'transform ' + windMs + 'ms cubic-bezier(.45,.05,.85,.4), opacity ' + windMs + 'ms ease-in';
