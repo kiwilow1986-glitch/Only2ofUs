@@ -606,24 +606,43 @@
   var SETS = {
     normal: { framesDir: 'frames', intro: 'INTRO.mp4', introEnd: 'INTRO_END.jpg',
               titleSmall: 'TITLE_SMALL.jpg', bgPosts: 'BG_POSTS.jpg',
+              music: 'music.mp3',
               compactFrac: 0.361, smallFrac: 0.368, bigFrac: 0.435 },
     xmas:   { framesDir: 'frames_xmas', intro: 'XMAS_INTRO.mp4', introEnd: 'XMAS_INTRO_END.jpg',
               titleSmall: 'XMAS_TITLE_SMALL.jpg', bgPosts: 'XMAS_BG_POSTS.jpg',
+              // ↓↓↓ 圣诞主题音乐的档案名字在这一行改 / change the Christmas music file name here ↓↓↓
+              music: 'XMAS_MUSIC.mp3',
               compactFrac: 0.361, smallFrac: 0.368, bigFrac: 0.435 },
     cny:    { framesDir: 'frames_cny', intro: 'CNY_INTRO.mp4', introEnd: 'CNY_INTRO_END.jpg',
               titleSmall: 'CNY_TITLE_SMALL.jpg', bgPosts: 'CNY_BG_POSTS.jpg',
+              // ↓↓↓ 新年主题音乐的档案名字在这一行改 / change the CNY music file name here ↓↓↓
+              music: 'CNY_MUSIC.mp3',
               compactFrac: 0.41, smallFrac: 0.415, bigFrac: 0.51 }
   };
+  function calcSeason() {
+    var n = new Date(), mm = n.getMonth() + 1, dd = n.getDate();
+    // 圣诞+跨年：12月23日 — 1月2日 / Christmas + New Year: Dec 23 - Jan 2
+    if ((mm === 12 && dd >= 23) || (mm === 1 && dd <= 2)) return 'xmas';
+    // 华人新年：2月3日 — 2月20日（这是2027年的窗口；2028年初一在1月底，日期到时要再改）
+    // Chinese New Year: Feb 3 - Feb 20 (the 2027 window; CNY 2028 falls in
+    // late January, so these dates need updating then)
+    if (mm === 2 && dd >= 3 && dd <= 20) return 'cny';
+    return 'normal';
+  }
   var forced = new URLSearchParams(location.search).get('theme');
-  var now = new Date(), m = now.getMonth() + 1, d = now.getDate();
-  var season = 'normal';
-  // 圣诞+跨年：12月23日 — 1月2日 / Christmas + New Year: Dec 23 - Jan 2
-  if ((m === 12 && d >= 23) || (m === 1 && d <= 2)) season = 'xmas';
-  // 华人新年：2月3日 — 2月20日（这是2027年的窗口；2028年初一在1月底，日期到时要再改）
-  // Chinese New Year: Feb 3 - Feb 20 (the 2027 window; CNY 2028 falls in
-  // late January, so these dates need updating then)
-  if (m === 2 && d >= 3 && d <= 20) season = 'cny';
+  var season = calcSeason();
   if (forced && Object.prototype.hasOwnProperty.call(SETS, forced)) season = forced;
+
+  // 节日自动换装：app 开着跨夜时，从后台回到前台的那一刻检查日期，
+  // 季节变了就自己刷新一次，不用任何人动手
+  // Auto switch: if the app stays open across midnight, the moment it
+  // returns to the foreground the date is re-checked and the page
+  // quietly reloads itself when the season has changed
+  if (!forced) {
+    document.addEventListener('visibilitychange', function() {
+      if (document.visibilityState === 'visible' && calcSeason() !== season) location.reload();
+    });
+  }
   window.THEME = SETS[season];
   if (season === 'normal') return; // 原版本来就写在 HTML/CSS 里，不用动 / the normal set is already in the HTML/CSS
 
@@ -631,6 +650,7 @@
   v.src = window.THEME.intro; v.load();
   document.getElementById('introFallback').src = window.THEME.introEnd;
   document.getElementById('titleStrip').src = window.THEME.framesDir + '/TS_23.webp';
+  document.getElementById('bgMusic').src = window.THEME.music; // 主题音乐 / theme music
 
   // CSS 里的三张背景图和两个版面比例一起换 / swap the three CSS backgrounds + the two layout variables
   var st = document.createElement('style');
