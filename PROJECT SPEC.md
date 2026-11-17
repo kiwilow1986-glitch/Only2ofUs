@@ -74,3 +74,12 @@
 - 原版行为在窗口外零改动（theme script 提前 return）
 - 测试：网址加 `?theme=xmas` 强制圣诞版，`?theme=normal` 强制原版
 - 其他节日（农历新年、情人节、520、七夕、两个生日、Anniversary）排队中，素材由 Kiwi 逐个提供
+
+## 14. 华人新年主题 / Chinese New Year theme（2026-11-17 完成）
+- **2月3日 — 2月20日**（2027年窗口）整套换装；**2月21日**换回原版；中间不转换
+- ⚠️ 2028年初一在1月底，**日期要在2028年前再改**（SETS 里的 cny 窗口 + 这行注释）
+- 换装内容：`CNY_INTRO.mp4`（8.9s）、`frames_cny/`（48张，取自 4.14s 影片放大段 f13–f61）、
+  `CNY_TITLE_SMALL.jpg`、`CNY_INTRO_END.jpg`、`CNY_BG_POSTS.jpg`（Kiwi 提供的无字日出云海）
+- **版面比例跟着主题走**（新增机制）：新年字体较高，compact 横幅 0.41、posts 小字起点 0.415、
+  大字起点 0.51（原版/圣诞维持 0.361/0.368/0.435），CSS 变量 --title-h/--compact-h 一并覆盖
+- 测试：`?theme=cny` 强制新年版；`?theme=xmas`、`?theme=normal` 照旧

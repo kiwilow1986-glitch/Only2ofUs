@@ -600,29 +600,46 @@
      back. For testing: append ?theme=xmas or ?theme=normal to the URL. -->
 <script>
 (function() {
+  // 三套主题的素材和版面比例 / the three theme sets: assets + layout fractions
+  // compactFrac = 收起横幅高度；smallFrac/bigFrac = 小字/大字状态下 posts 的起点
+  // （新年版的字比较高，所以横幅要高一点才不会切到字）
+  var SETS = {
+    normal: { framesDir: 'frames', intro: 'INTRO.mp4', introEnd: 'INTRO_END.jpg',
+              titleSmall: 'TITLE_SMALL.jpg', bgPosts: 'BG_POSTS.jpg',
+              compactFrac: 0.361, smallFrac: 0.368, bigFrac: 0.435 },
+    xmas:   { framesDir: 'frames_xmas', intro: 'XMAS_INTRO.mp4', introEnd: 'XMAS_INTRO_END.jpg',
+              titleSmall: 'XMAS_TITLE_SMALL.jpg', bgPosts: 'XMAS_BG_POSTS.jpg',
+              compactFrac: 0.361, smallFrac: 0.368, bigFrac: 0.435 },
+    cny:    { framesDir: 'frames_cny', intro: 'CNY_INTRO.mp4', introEnd: 'CNY_INTRO_END.jpg',
+              titleSmall: 'CNY_TITLE_SMALL.jpg', bgPosts: 'CNY_BG_POSTS.jpg',
+              compactFrac: 0.41, smallFrac: 0.415, bigFrac: 0.51 }
+  };
   var forced = new URLSearchParams(location.search).get('theme');
   var now = new Date(), m = now.getMonth() + 1, d = now.getDate();
-  var xmas = (m === 12 && d >= 23) || (m === 1 && d <= 2);
-  if (forced === 'xmas') xmas = true;
-  if (forced === 'normal') xmas = false;
-  window.THEME = xmas
-    ? { framesDir: 'frames_xmas', intro: 'XMAS_INTRO.mp4', introEnd: 'XMAS_INTRO_END.jpg',
-        titleSmall: 'XMAS_TITLE_SMALL.jpg', bgPosts: 'XMAS_BG_POSTS.jpg' }
-    : { framesDir: 'frames', intro: 'INTRO.mp4', introEnd: 'INTRO_END.jpg',
-        titleSmall: 'TITLE_SMALL.jpg', bgPosts: 'BG_POSTS.jpg' };
-  if (!xmas) return; // 原版本来就写在 HTML/CSS 里，不用动 / the normal set is already in the HTML/CSS
+  var season = 'normal';
+  // 圣诞+跨年：12月23日 — 1月2日 / Christmas + New Year: Dec 23 - Jan 2
+  if ((m === 12 && d >= 23) || (m === 1 && d <= 2)) season = 'xmas';
+  // 华人新年：2月3日 — 2月20日（这是2027年的窗口；2028年初一在1月底，日期到时要再改）
+  // Chinese New Year: Feb 3 - Feb 20 (the 2027 window; CNY 2028 falls in
+  // late January, so these dates need updating then)
+  if (m === 2 && d >= 3 && d <= 20) season = 'cny';
+  if (forced && Object.prototype.hasOwnProperty.call(SETS, forced)) season = forced;
+  window.THEME = SETS[season];
+  if (season === 'normal') return; // 原版本来就写在 HTML/CSS 里，不用动 / the normal set is already in the HTML/CSS
 
   var v = document.getElementById('introVideo');
   v.src = window.THEME.intro; v.load();
   document.getElementById('introFallback').src = window.THEME.introEnd;
   document.getElementById('titleStrip').src = window.THEME.framesDir + '/TS_23.webp';
 
-  // CSS 里的三张背景图一起换 / swap the three CSS background images too
+  // CSS 里的三张背景图和两个版面比例一起换 / swap the three CSS backgrounds + the two layout variables
   var st = document.createElement('style');
   st.textContent =
     '.backdrop-posts { background-image: url("' + window.THEME.bgPosts + '") !important; }' +
     '.intro-backdrop { background-image: url("' + window.THEME.introEnd + '") !important; }' +
-    '.compact-header .band { background-image: url("' + window.THEME.titleSmall + '") !important; }';
+    '.compact-header .band { background-image: url("' + window.THEME.titleSmall + '") !important; }' +
+    ':root { --title-h: calc(var(--stage-w) * ' + window.THEME.smallFrac + ');' +
+            ' --compact-h: calc(var(--stage-w) * ' + window.THEME.compactFrac + '); }';
   document.head.appendChild(st);
 })();
 </script>
@@ -898,9 +915,10 @@ function playIntro(onDone) {
     const band = document.querySelector('.compact-header .band');
 
     const SCRUB_RANGE = 170;
-    const SMALL_FRAC = 0.368;
-    const BIG_FRAC = 0.435;
-    const COMPACT_FRAC = 0.361;
+    // 三个版面比例跟着主题走（新年版的字比较高）/ layout fractions follow the theme (the CNY title is taller)
+    const SMALL_FRAC = window.THEME.smallFrac;
+    const BIG_FRAC = window.THEME.bigFrac;
+    const COMPACT_FRAC = window.THEME.compactFrac;
     const BAND_FULL_FRAC = 2.1667;
     const MM2 = 7.6;
     const N_FRAMES = 24;
