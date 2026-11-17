@@ -65,3 +65,12 @@
 - 节日：圣诞、元旦（12/31–1/2）、农历新年（除夕–初三）、情人节、520（每年5月20日）、七夕、
   Ms Fum 生日 8月12日（前后3天）、Mr Low 生日 10月27日（前后3天）、Anniversary 4月11日（前后3天）
 - 强度：**全套氛围** —— 背景色调 + 飘落物 + 标题装饰
+
+## 13. 圣诞平安夜主题 / Christmas theme（2026-11-17 完成）
+- **12月23日 00:00 — 1月2日 23:59**（每年，手机本地时间）自动整套换装；**1月3日**自动换回原版；中间不转换
+- 换装内容：开场影片 `XMAS_INTRO.mp4`（7.2s，Kiwi 提供，零改动 remux）、标题帧 `frames_xmas/`（48张，
+  取自 Kiwi 的 3.77s 影片放大段 f1–f33，TS=TG镜像保证首尾衔接）、`XMAS_TITLE_SMALL.jpg`、
+  `XMAS_INTRO_END.jpg`、`XMAS_BG_POSTS.jpg`（Kiwi 提供的无字雪景）
+- 原版行为在窗口外零改动（theme script 提前 return）
+- 测试：网址加 `?theme=xmas` 强制圣诞版，`?theme=normal` 强制原版
+- 其他节日（农历新年、情人节、520、七夕、两个生日、Anniversary）排队中，素材由 Kiwi 逐个提供

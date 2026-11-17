@@ -592,6 +592,41 @@
   <img id="titleStrip" src="frames/TS_23.webp" alt="" draggable="false">
 </div></div>
 
+<!-- ===== 季节主题 / Seasonal theme =====
+     12月23日到1月2日（圣诞平安夜+跨年）自动换圣诞版的开场、标题和背景，
+     1月3日起自动换回原版。测试用：网址加 ?theme=xmas 强制圣诞版，?theme=normal 强制原版。
+     Dec 23 - Jan 2 (Christmas Eve + New Year's Eve) the intro, title and
+     backdrops switch to the Christmas set automatically; Jan 3 switches
+     back. For testing: append ?theme=xmas or ?theme=normal to the URL. -->
+<script>
+(function() {
+  var forced = new URLSearchParams(location.search).get('theme');
+  var now = new Date(), m = now.getMonth() + 1, d = now.getDate();
+  var xmas = (m === 12 && d >= 23) || (m === 1 && d <= 2);
+  if (forced === 'xmas') xmas = true;
+  if (forced === 'normal') xmas = false;
+  window.THEME = xmas
+    ? { framesDir: 'frames_xmas', intro: 'XMAS_INTRO.mp4', introEnd: 'XMAS_INTRO_END.jpg',
+        titleSmall: 'XMAS_TITLE_SMALL.jpg', bgPosts: 'XMAS_BG_POSTS.jpg' }
+    : { framesDir: 'frames', intro: 'INTRO.mp4', introEnd: 'INTRO_END.jpg',
+        titleSmall: 'TITLE_SMALL.jpg', bgPosts: 'BG_POSTS.jpg' };
+  if (!xmas) return; // 原版本来就写在 HTML/CSS 里，不用动 / the normal set is already in the HTML/CSS
+
+  var v = document.getElementById('introVideo');
+  v.src = window.THEME.intro; v.load();
+  document.getElementById('introFallback').src = window.THEME.introEnd;
+  document.getElementById('titleStrip').src = window.THEME.framesDir + '/TS_23.webp';
+
+  // CSS 里的三张背景图一起换 / swap the three CSS background images too
+  var st = document.createElement('style');
+  st.textContent =
+    '.backdrop-posts { background-image: url("' + window.THEME.bgPosts + '") !important; }' +
+    '.intro-backdrop { background-image: url("' + window.THEME.introEnd + '") !important; }' +
+    '.compact-header .band { background-image: url("' + window.THEME.titleSmall + '") !important; }';
+  document.head.appendChild(st);
+})();
+</script>
+
 <!-- 对方在线时显示的小bar / shown when the other person is online -->
 <div class="online-bar" id="onlineBar"><span class="dot"></span><span id="onlineText"></span></div>
 
@@ -880,8 +915,8 @@ function playIntro(onDone) {
     let rafPending = false;
     let growRaf = null;
 
-    function tsUrl(i) { return 'frames/TS_' + (i < 10 ? '0' : '') + i + '.webp'; }
-    function tgUrl(i) { return 'frames/TG_' + (i < 10 ? '0' : '') + i + '.webp'; }
+    function tsUrl(i) { return window.THEME.framesDir + '/TS_' + (i < 10 ? '0' : '') + i + '.webp'; }
+    function tgUrl(i) { return window.THEME.framesDir + '/TG_' + (i < 10 ? '0' : '') + i + '.webp'; }
     // 开场一结束就预先载入全部48帧（共约2.8MB），之后翻帧零等待
     // Preload all 48 frames (~2.8MB) right after the intro so frame
     // swaps are instant
