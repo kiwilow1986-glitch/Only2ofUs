@@ -59,7 +59,6 @@
     z-index: 0;
     pointer-events: none;
   }
-  }
   .container {
     max-width: 480px;
     margin: 0 auto;
@@ -606,17 +605,17 @@
   var SETS = {
     normal: { framesDir: 'frames', intro: 'INTRO.mp4', introEnd: 'INTRO_END.jpg',
               titleSmall: 'TITLE_SMALL.jpg', bgPosts: 'BG_POSTS.jpg',
-              music: 'music.mp3',
+              music: 'music.mp3', fall: null,
               compactFrac: 0.361, smallFrac: 0.368, bigFrac: 0.435 },
     xmas:   { framesDir: 'frames_xmas', intro: 'XMAS_INTRO.mp4', introEnd: 'XMAS_INTRO_END.jpg',
               titleSmall: 'XMAS_TITLE_SMALL.jpg', bgPosts: 'XMAS_BG_POSTS.jpg',
               // ↓↓↓ 圣诞主题音乐的档案名字在这一行改 / change the Christmas music file name here ↓↓↓
-              music: 'XMAS_MUSIC.mp3',
+              music: 'XMAS_MUSIC.mp3', fall: 'snow',
               compactFrac: 0.361, smallFrac: 0.368, bigFrac: 0.435 },
     cny:    { framesDir: 'frames_cny', intro: 'CNY_INTRO.mp4', introEnd: 'CNY_INTRO_END.jpg',
               titleSmall: 'CNY_TITLE_SMALL.jpg', bgPosts: 'CNY_BG_POSTS.jpg',
               // ↓↓↓ 新年主题音乐的档案名字在这一行改 / change the CNY music file name here ↓↓↓
-              music: 'CNY_MUSIC.mp3',
+              music: 'CNY_MUSIC.mp3', fall: 'plum',
               // startBig：这套的开场结尾定格在「大字」，所以一打开就是大字、往下滑直接跟手指缩小
               // startBig: this set's intro ends on the BIG title, so the page starts big
               // and the first scroll down already scrubs the shrink
@@ -625,7 +624,7 @@
     vday:   { framesDir: 'frames_vday', intro: 'VDAY_INTRO.mp4', introEnd: 'VDAY_INTRO_END.jpg',
               titleSmall: 'VDAY_TITLE_SMALL.jpg', bgPosts: 'VDAY_BG_POSTS.jpg',
               // ↓↓↓ 情人节主题音乐的档案名字在这一行改 / change the Valentine music file name here ↓↓↓
-              music: 'VDAY_MUSIC.mp3',
+              music: 'VDAY_MUSIC.mp3', fall: 'vdaymix',
               // 这套开场结尾定格在小字（跟圣诞一样的经典结构）；字比较大所以横幅和 posts 起点高一些
               // this set's intro ends on the small title (classic structure like xmas);
               // the artwork is taller, so the banner and posts offsets are larger
@@ -678,6 +677,209 @@
     ':root { --title-h: calc(var(--stage-w) * ' + (window.THEME.startBig ? window.THEME.bigFrac : window.THEME.smallFrac) + ');' +
             ' --compact-h: calc(var(--stage-w) * ' + window.THEME.compactFrac + '); }';
   document.head.appendChild(st);
+})();
+</script>
+
+<!-- ===== 季节飘落点缀 / Seasonal falling particles =====
+     圣诞=雪花、新年=梅花瓣、情人节=爱心+玫瑰花瓣。canvas 按屏幕像素密度渲染（高清），
+     60fps，点不到（pointer-events:none），开场影片播完才出现，app 在后台时自动暂停。
+     Christmas = snow, CNY = plum petals, Valentine = hearts + rose petals.
+     Rendered on a devicePixelRatio-aware canvas (crisp), 60fps, click-through,
+     appears only after the intro finishes, pauses while backgrounded. -->
+<canvas id="seasonFall" style="position:fixed; inset:0; z-index:50; pointer-events:none;"></canvas>
+<script>
+(function() {
+  var kind = window.THEME && window.THEME.fall;
+  var canvas = document.getElementById('seasonFall');
+  if (!kind) { if (canvas) canvas.remove(); return; }
+  var ctx = canvas.getContext('2d');
+  var W = 0, H = 0, DPR = 1;
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 3);
+    W = window.innerWidth; H = window.innerHeight;
+    canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
+    canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  // ---- 预先把每种形状画成高清贴图（3倍大小），之后每帧只是贴图，省电又清晰 ----
+  // ---- Each shape is pre-rendered once at 3x size; every frame just stamps it ----
+  var S = 3; // sprite supersample
+  function sprite(w, h, draw) {
+    var c = document.createElement('canvas');
+    c.width = Math.ceil(w * S); c.height = Math.ceil(h * S);
+    var x = c.getContext('2d');
+    x.scale(S, S);
+    draw(x, w, h);
+    return { c: c, w: w, h: h };
+  }
+  // 雪花：柔光白点（真实的雪在镜头里就是这样），三种大小
+  // Snowflake: soft white glow dot (how real snow looks on camera), three sizes
+  function snowSprite(d) {
+    return sprite(d, d, function(x, w, h) {
+      var r = w / 2;
+      var g = x.createRadialGradient(r, r, 0, r, r, r);
+      g.addColorStop(0, 'rgba(255,255,255,0.95)');
+      g.addColorStop(0.45, 'rgba(255,255,255,0.75)');
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      x.fillStyle = g;
+      x.fillRect(0, 0, w, h);
+    });
+  }
+  // 花瓣：圆尾尖头的花瓣形 + 渐变 + 浅色边 / Petal: rounded teardrop with gradient + lighter rim
+  function petalSprite(w, h, c1, c2, rim) {
+    return sprite(w, h, function(x) {
+      var g = x.createLinearGradient(0, 0, w * 0.3, h);
+      g.addColorStop(0, c1); g.addColorStop(1, c2);
+      x.beginPath();
+      x.moveTo(w / 2, 0);
+      x.bezierCurveTo(w * 1.02, h * 0.12, w * 0.96, h * 0.78, w / 2, h);
+      x.bezierCurveTo(w * 0.04, h * 0.78, -w * 0.02, h * 0.12, w / 2, 0);
+      x.closePath();
+      x.fillStyle = g; x.fill();
+      x.lineWidth = 0.8; x.strokeStyle = rim; x.stroke();
+      // 中间一道淡淡的高光让它有立体感 / a faint center highlight for depth
+      x.beginPath();
+      x.moveTo(w / 2, h * 0.08);
+      x.quadraticCurveTo(w * 0.62, h * 0.5, w / 2, h * 0.9);
+      x.lineWidth = w * 0.1; x.strokeStyle = 'rgba(255,255,255,0.28)'; x.stroke();
+    });
+  }
+  // 爱心：经典两弧一尖 + 渐变 + 小高光 / Heart: classic shape, gradient, small specular
+  function heartSprite(d) {
+    return sprite(d, d, function(x, w, h) {
+      var g = x.createLinearGradient(0, 0, 0, h);
+      g.addColorStop(0, '#ff6b87'); g.addColorStop(1, '#d81b4d');
+      x.beginPath();
+      x.moveTo(w / 2, h * 0.3);
+      x.bezierCurveTo(w * 0.42, h * 0.02, w * -0.08, h * 0.12, w * 0.06, h * 0.46);
+      x.bezierCurveTo(w * 0.16, h * 0.68, w * 0.38, h * 0.82, w / 2, h * 0.96);
+      x.bezierCurveTo(w * 0.62, h * 0.82, w * 0.84, h * 0.68, w * 0.94, h * 0.46);
+      x.bezierCurveTo(w * 1.08, h * 0.12, w * 0.58, h * 0.02, w / 2, h * 0.3);
+      x.closePath();
+      x.fillStyle = g; x.fill();
+      x.beginPath();
+      x.ellipse(w * 0.3, h * 0.3, w * 0.09, w * 0.055, -0.6, 0, Math.PI * 2);
+      x.fillStyle = 'rgba(255,255,255,0.5)'; x.fill();
+    });
+  }
+
+  // ---- 贴图池：每种形状只画一次，重生时循环取用 / sprite pools: each shape drawn once, reused forever ----
+  function rand(a, b) { return a + Math.random() * (b - a); }
+  var POOL = { snow: [], plum: [], heart: [], rose: [] };
+  if (kind === 'snow') {
+    [3.5, 4.5, 5.5, 6.5, 8, 10, 12].forEach(function(d) { POOL.snow.push(snowSprite(d)); });
+  } else if (kind === 'plum') {
+    [9, 11, 13, 15, 16].forEach(function(pw) {
+      POOL.plum.push(petalSprite(pw, pw * 1.25, '#ffd9e1', '#ff9db4', 'rgba(233,120,146,0.65)'));
+    });
+  } else {
+    [10, 13, 15, 17].forEach(function(hd) { POOL.heart.push(heartSprite(hd)); });
+    [10, 12, 14, 16, 18].forEach(function(rw) {
+      POOL.rose.push(petalSprite(rw, rw * 1.2, '#e8505f', '#a81226', 'rgba(120,10,25,0.6)'));
+    });
+  }
+  function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+  // ---- 每个主题的配方 / recipe per theme ----
+  var parts = [];
+  function makeParticle(first) {
+    var p = { phase: rand(0, Math.PI * 2), tPhase: rand(0, Math.PI * 2) };
+    if (kind === 'snow') {
+      var si = Math.floor(Math.random() * POOL.snow.length);
+      p.spr = POOL.snow[si];
+      var d = p.spr.w;
+      p.vy = d * rand(5.5, 7.5);           // 大的（近的）落得快 / bigger (closer) falls faster
+      p.sway = rand(10, 26); p.swayF = rand(0.25, 0.6);
+      p.alpha = si < 3 ? rand(0.4, 0.6) : rand(0.65, 0.95); // 远层小雪点淡一些 / far small flakes are dimmer
+      p.spin = 0; p.tumble = 0;
+    } else if (kind === 'plum') {
+      p.spr = pick(POOL.plum);
+      p.vy = rand(42, 78);
+      p.sway = rand(20, 44); p.swayF = rand(0.3, 0.55);
+      p.alpha = rand(0.82, 0.97);
+      p.spin = rand(-1.4, 1.4); p.tumble = rand(0.8, 1.8);
+    } else { // vdaymix：四成爱心 + 六成玫瑰花瓣 / 40% hearts + 60% rose petals
+      if (Math.random() < 0.4) {
+        p.spr = pick(POOL.heart);
+        p.vy = rand(38, 64);
+        p.sway = rand(14, 30); p.swayF = rand(0.25, 0.5);
+        p.alpha = rand(0.8, 0.95);
+        p.spin = rand(-0.5, 0.5); p.tumble = 0;
+      } else {
+        p.spr = pick(POOL.rose);
+        p.vy = rand(46, 82);
+        p.sway = rand(22, 46); p.swayF = rand(0.3, 0.55);
+        p.alpha = rand(0.85, 0.97);
+        p.spin = rand(-1.6, 1.6); p.tumble = rand(0.8, 1.8);
+      }
+    }
+    p.x = rand(0, W);
+    p.y = first ? rand(-H * 0.1, H) : rand(-80, -20); // 一开始铺满全屏，之后从顶上进场
+    p.rot = rand(0, Math.PI * 2);
+    return p;
+  }
+  var COUNT = kind === 'snow' ? 46 : kind === 'plum' ? 26 : 28;
+  for (var i = 0; i < COUNT; i++) parts.push(makeParticle(true));
+
+  // ---- 动画主循环 / main loop ----
+  var introStage = null, mainContent = null;
+  var last = 0, running = true, t = 0, rafId = 0, cleared = true;
+  function frame(now) {
+    if (!running) return;
+    rafId = requestAnimationFrame(frame);
+    var dt = Math.min((now - last) / 1000, 0.05); last = now;
+    t += dt;
+    // 这两个元素在本脚本后面才出现，所以循环里才去找 / these elements come later in the page, so look them up lazily
+    if (!introStage) introStage = document.getElementById('introStage');
+    if (!mainContent) mainContent = document.getElementById('mainContent');
+    // 开场影片播到第 3 秒就开始飘；开场结束后只要还在网站里就继续飘
+    // Particles start 3 seconds into the intro video, and keep falling
+    // for as long as the site is on screen afterwards
+    var v = document.getElementById('introVideo');
+    var ready = introStage && mainContent && introStage.classList.contains('active') &&
+      (introStage.classList.contains('settled')
+        ? mainContent.style.display !== 'none'          // 开场结束后：登出就隐藏 / after the intro: hide on logout
+        : (v && v.currentTime >= 3));                   // 开场中：第 3 秒出场 / during the intro: enter at 3s
+    if (!ready) {
+      // 还没到出场时间：画布已经是空的就什么都不做，省电 / not time yet: skip work if already blank
+      if (!cleared) { ctx.clearRect(0, 0, W, H); cleared = true; }
+      return;
+    }
+    ctx.clearRect(0, 0, W, H);
+    cleared = false;
+    for (var i = 0; i < parts.length; i++) {
+      var p = parts[i];
+      p.y += p.vy * dt;
+      p.x += Math.cos(t * p.swayF * Math.PI * 2 + p.phase) * p.sway * dt;
+      p.rot += p.spin * dt;
+      if (p.y > H + 40) { parts[i] = makeParticle(false); continue; }
+      var sx = p.tumble ? (0.35 + 0.65 * Math.abs(Math.sin(t * p.tumble + p.tPhase))) : 1;
+      ctx.save();
+      ctx.globalAlpha = p.alpha;
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rot);
+      ctx.scale(sx, 1);
+      ctx.drawImage(p.spr.c, -p.spr.w / 2, -p.spr.h / 2, p.spr.w, p.spr.h);
+      ctx.restore();
+    }
+  }
+  rafId = requestAnimationFrame(function(now) { last = now; rafId = requestAnimationFrame(frame); });
+  // app 在后台时暂停（并取消排队中的那一帧，确保永远只有一条循环），省电
+  // pause while backgrounded (and cancel the queued frame so only ONE loop ever exists)
+  document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'visible') {
+      if (!running) {
+        running = true;
+        rafId = requestAnimationFrame(function(now) { last = now; rafId = requestAnimationFrame(frame); });
+      }
+    } else {
+      running = false;
+      cancelAnimationFrame(rafId);
+    }
+  });
 })();
 </script>
 
