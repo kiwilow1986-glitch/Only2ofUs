@@ -617,16 +617,31 @@
               titleSmall: 'CNY_TITLE_SMALL.jpg', bgPosts: 'CNY_BG_POSTS.jpg',
               // ↓↓↓ 新年主题音乐的档案名字在这一行改 / change the CNY music file name here ↓↓↓
               music: 'CNY_MUSIC.mp3',
-              compactFrac: 0.41, smallFrac: 0.415, bigFrac: 0.51 }
+              // startBig：这套的开场结尾定格在「大字」，所以一打开就是大字、往下滑直接跟手指缩小
+              // startBig: this set's intro ends on the BIG title, so the page starts big
+              // and the first scroll down already scrubs the shrink
+              startBig: true,
+              compactFrac: 0.41, smallFrac: 0.58, bigFrac: 0.58 },
+    vday:   { framesDir: 'frames_vday', intro: 'VDAY_INTRO.mp4', introEnd: 'VDAY_INTRO_END.jpg',
+              titleSmall: 'VDAY_TITLE_SMALL.jpg', bgPosts: 'VDAY_BG_POSTS.jpg',
+              // ↓↓↓ 情人节主题音乐的档案名字在这一行改 / change the Valentine music file name here ↓↓↓
+              music: 'VDAY_MUSIC.mp3',
+              // 这套开场结尾定格在小字（跟圣诞一样的经典结构）；字比较大所以横幅和 posts 起点高一些
+              // this set's intro ends on the small title (classic structure like xmas);
+              // the artwork is taller, so the banner and posts offsets are larger
+              compactFrac: 0.47, smallFrac: 0.47, bigFrac: 0.56 }
   };
   function calcSeason() {
     var n = new Date(), mm = n.getMonth() + 1, dd = n.getDate();
     // 圣诞+跨年：12月23日 — 1月2日 / Christmas + New Year: Dec 23 - Jan 2
     if ((mm === 12 && dd >= 23) || (mm === 1 && dd <= 2)) return 'xmas';
-    // 华人新年：2月3日 — 2月20日（这是2027年的窗口；2028年初一在1月底，日期到时要再改）
-    // Chinese New Year: Feb 3 - Feb 20 (the 2027 window; CNY 2028 falls in
+    // 华人新年：2月4日 — 2月12日（这是2027年的窗口；2028年初一在1月底，日期到时要再改）
+    // Chinese New Year: Feb 4 - Feb 12 (the 2027 window; CNY 2028 falls in
     // late January, so these dates need updating then)
-    if (mm === 2 && dd >= 3 && dd <= 20) return 'cny';
+    if (mm === 2 && dd >= 4 && dd <= 12) return 'cny';
+    // 情人节：2月13日 — 2月15日；2月16日起回原版
+    // Valentine's Day: Feb 13 - Feb 15; back to normal from Feb 16
+    if (mm === 2 && dd >= 13 && dd <= 15) return 'vday';
     return 'normal';
   }
   var forced = new URLSearchParams(location.search).get('theme');
@@ -649,7 +664,9 @@
   var v = document.getElementById('introVideo');
   v.src = window.THEME.intro; v.load();
   document.getElementById('introFallback').src = window.THEME.introEnd;
-  document.getElementById('titleStrip').src = window.THEME.framesDir + '/TS_23.webp';
+  // startBig 的主题开局显示大字（TS_00），其他显示小字（TS_23）
+  // startBig themes open on the big title (TS_00), the others on the small one (TS_23)
+  document.getElementById('titleStrip').src = window.THEME.framesDir + (window.THEME.startBig ? '/TS_00.webp' : '/TS_23.webp');
   document.getElementById('bgMusic').src = window.THEME.music; // 主题音乐 / theme music
 
   // CSS 里的三张背景图和两个版面比例一起换 / swap the three CSS backgrounds + the two layout variables
@@ -658,7 +675,7 @@
     '.backdrop-posts { background-image: url("' + window.THEME.bgPosts + '") !important; }' +
     '.intro-backdrop { background-image: url("' + window.THEME.introEnd + '") !important; }' +
     '.compact-header .band { background-image: url("' + window.THEME.titleSmall + '") !important; }' +
-    ':root { --title-h: calc(var(--stage-w) * ' + window.THEME.smallFrac + ');' +
+    ':root { --title-h: calc(var(--stage-w) * ' + (window.THEME.startBig ? window.THEME.bigFrac : window.THEME.smallFrac) + ');' +
             ' --compact-h: calc(var(--stage-w) * ' + window.THEME.compactFrac + '); }';
   document.head.appendChild(st);
 })();
@@ -943,11 +960,15 @@ function playIntro(onDone) {
     const MM2 = 7.6;
     const N_FRAMES = 24;
 
-    let firstCycleDone = false;
+    // startBig 的主题（开场定格在大字）一开始就进入「完成第一次」状态：
+    // 直接跟手指缩放，不需要第一次放大动画
+    // startBig themes (intro ends on the big title) start in the steady state:
+    // scrubbing follows the finger right away, no first-grow animation needed
+    let firstCycleDone = !!window.THEME.startBig;
     let growPlaying = false;
     let headerActive = false;
     let hasLeftTop = false;   // 真正滑下去过（超过一半）才算离开过顶部 / only counts after really scrolling down past halfway
-    let layoutBig = false;    // posts按大字还是小字排位 / posts positioned for the big or the small title
+    let layoutBig = !!window.THEME.startBig; // posts按大字还是小字排位 / posts positioned for the big or the small title
     let lastGrowIdx = 0;
     let lastFrameIdx = -1;
     let rafPending = false;
@@ -1090,9 +1111,17 @@ function playIntro(onDone) {
   }
   video.addEventListener('play', function() { video.playbackRate = INTRO_PLAYBACK_RATE; });
 
-  // 保险：网络太慢时最多等 15 秒，不会一直卡在开场
-  // Safety net: on a slow connection, wait at most 15s rather than hanging on the opening
-  const safetyTimer = setTimeout(function() { finish(true); }, 15000);
+  // 保险：网络太慢时最多等 15 秒，不会一直卡在开场；
+  // 影片一旦真正开始播，就改成「影片长度 + 5 秒」重新计时，长开场（如情人节11.8秒）不会被切掉
+  // Safety net: on a slow connection, wait at most 15s rather than hanging on the
+  // opening; once the video actually starts playing, the timer restarts as
+  // "video duration + 5s", so a long intro (e.g. the 11.8s Valentine one) never gets cut off
+  let safetyTimer = setTimeout(function() { finish(true); }, 15000);
+  video.addEventListener('playing', function() {
+    clearTimeout(safetyTimer);
+    const dur = (isFinite(video.duration) && video.duration > 0) ? video.duration : 15;
+    safetyTimer = setTimeout(function() { finish(true); }, dur * 1000 + 5000);
+  }, { once: true });
 
   video.defaultPlaybackRate = INTRO_PLAYBACK_RATE;
   video.playbackRate = INTRO_PLAYBACK_RATE;
